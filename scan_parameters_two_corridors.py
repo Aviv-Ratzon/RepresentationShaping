@@ -17,26 +17,26 @@ from torch.nn import MSELoss
 from run_sim import Config, run_sim
 from utils import cosine_similarity, get_all_key_combinations, get_r_2, vector_angle, get_upper_triangle, calc_NC1, pca_torch
 
-num_workers = 8
+num_workers = 16
 gpu_ids = np.arange(8)
 use_gpu = True
-debug = True
+debug = False
 result_path = './results/sweep_results_linear/MSE/again'
 modify_vars = {
-    'B': [0.1, 0.5, 1],
-    'label_noise': [0.1, 0.01, 0],
-    'max_move': [1, 10]
+    # 'B': [0.1, 0.5, 1],
+    # 'sig_h_2': [1e-5, 1e-1],
+    # 'L': [1, 2, 3, 4],
+    'max_move': np.arange(1,16)
 }
 base_params = {
     'linear_net': True,
     'sig_h_2': 1e-5,
     'learning_rate': 0.001,
-    'L': 10,
-    'length_corridors': [20]*1,
-    'hidden_size': 42,
+    'length_corridors': [30]*1,
+    'hidden_size': 100,
     'num_epochs': 10000000,
     'algo_name': 'SGD',
-    'loss_fn': nn.MSELoss()
+    'loss_fn': nn.CrossEntropyLoss(),
 }
 
 def run_scenario(config_data):
@@ -155,7 +155,6 @@ def worker_function(args):
     num_runs = args[2]
     start_time = args[3]
     data_dict_l = args[4]
-    np.random.seed()
     result = run_scenario(config_data)
     with counter_lock:
         counter.value += 1
@@ -171,6 +170,10 @@ def worker_function(args):
     #     else:
     #         result.to_csv(file_name, index=False, mode='a', header=False)
     data_dict_l.append(result)
+    if len(data_dict_l) % 10 == 0:
+        data_dict_l_save = list(data_dict_l)
+        with open('data_dict_l_from_scan.pkl', 'wb') as f:
+            pkl.dump(data_dict_l_save, f)
 
     return result
 
@@ -188,7 +191,7 @@ def get_args_list_all_combs():
     args_list = []
     iter_dicts = get_all_key_combinations(modify_vars)
     for i, curr_dict in enumerate(iter_dicts):
-        args_list.append([{**base_params, **{'seed': 1, 'gpu_id': gpu_ids[i % len(gpu_ids)], **curr_dict}},
+        args_list.append([{**base_params, **{'seed': 0, 'gpu_id': gpu_ids[i % len(gpu_ids)], **curr_dict}},
                             f'all_combs'])
     return args_list
 

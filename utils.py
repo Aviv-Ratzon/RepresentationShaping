@@ -1,4 +1,7 @@
 from itertools import product
+import torch
+import torch.nn.functional as F
+
 import numpy as np
 from scipy.sparse.linalg import svds
 from sklearn.linear_model import LinearRegression
@@ -197,17 +200,14 @@ def factorize_matrix(M, N=None):
     # Handle case where N > min(D1,D2)
     if N > min(D1,D2):
         # Pad U with random orthonormal columns
-        U_extra = np.random.randn(D1, N - min(D1,D2))
-        U_extra, _ = np.linalg.qr(U_extra)
+        U_extra = np.zeros([D1, N - min(D1,D2)])
         U = np.hstack([U, U_extra])
         
         # Pad S with zeros
         S = np.pad(S, (0, N - len(S)), mode='constant')
         
         # Pad Vt with random orthonormal rows
-        Vt_extra = np.random.randn(N - min(D1,D2), D2) 
-        Vt_extra, _ = np.linalg.qr(Vt_extra.T)
-        Vt_extra = Vt_extra.T
+        Vt_extra = np.zeros([N - min(D1,D2), D2]) 
         Vt = np.vstack([Vt, Vt_extra])
 
     # Take N components
@@ -223,3 +223,89 @@ def factorize_matrix(M, N=None):
     A = U_N @ np.sqrt(S_N) @ Q
     B = Q.T @ np.sqrt(S_N) @ Vt_N
     return A, B
+
+
+def compute_hessian(W_l, x, target, loss_fn='CE'):
+    """
+    Compute the Hessian of MSE loss w.r.t. the flattened parameters.
+
+    Args:
+        W_l (list of torch.Tensor): List of weight matrices (no bias).
+        x (torch.Tensor): Input tensor of shape (batch_size, in_features).
+        target (torch.Tensor): Target tensor of shape (batch_size, out_features).
+
+    Returns:
+        torch.Tensor: 2D Hessian matrix of shape (num_params, num_params).
+    """
+    # Make sure weights require gradients
+    W_l = [w.clone().detach().requires_grad_(True) for w in W_l]
+
+    # Forward pass through layers
+    out = x
+    for W in W_l:
+        out = out @ W.T  # Linear layer without bias
+
+    # Loss (mean squared error)
+    if loss_fn == 'CE':
+        probs = F.softmax(out)
+        loss = F.cross_entropy(probs, target)
+    elif loss_fn == 'MSE':
+        loss = F.mse_loss(out, target)
+    else:
+        raise ValueError(f"Invalid loss function: {loss_fn}")
+
+    # Flatten parameters
+    params_vector = torch.cat([w.view(-1) for w in W_l])
+
+    # Compute gradients (first-order)
+    grads = torch.autograd.grad(loss, W_l, create_graph=True)
+    grads_vector = torch.cat([g.view(-1) for g in grads])
+
+    num_params = params_vector.numel()
+    hessian = torch.zeros(num_params, num_params)
+
+    for i in range(num_params):
+        grad2rd = torch.autograd.grad(grads_vector[i], W_l, retain_graph=True)
+        grad2rd_vector = torch.cat([g.contiguous().view(-1) for g in grad2rd])
+        hessian[i] = grad2rd_vector
+
+    return hessian
+
+
+def compute_gradient(W_l, x, target, loss_fn='CE'):
+    """
+    Compute the Hessian of MSE loss w.r.t. the flattened parameters.
+
+    Args:
+        W_l (list of torch.Tensor): List of weight matrices (no bias).
+        x (torch.Tensor): Input tensor of shape (batch_size, in_features).
+        target (torch.Tensor): Target tensor of shape (batch_size, out_features).
+
+    Returns:
+        torch.Tensor: 2D Hessian matrix of shape (num_params, num_params).
+    """
+    # Make sure weights require gradients
+    W_l = [w.clone().detach().requires_grad_(True) for w in W_l]
+
+    # Forward pass through layers
+    out = x
+    for W in W_l:
+        out = out @ W.T  # Linear layer without bias
+
+    # Loss (mean squared error)
+    if loss_fn == 'CE':
+        probs = F.softmax(out)
+        loss = F.cross_entropy(probs, target)
+    elif loss_fn == 'MSE':
+        loss = F.mse_loss(out, target)
+    else:
+        raise ValueError(f"Invalid loss function: {loss_fn}")
+
+    # Flatten parameters
+    params_vector = torch.cat([w.view(-1) for w in W_l])
+
+    # Compute gradients (first-order)
+    grads = torch.autograd.grad(loss, W_l, create_graph=True)
+    grads_vector = torch.cat([g.view(-1) for g in grads])
+    
+    return grads_vector

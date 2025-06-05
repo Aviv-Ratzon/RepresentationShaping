@@ -26,7 +26,7 @@ class Config:
         self.one_hot_inputs=True
         self.allow_backwards=True
         self.whiten_data = False
-        self.split_actions=False
+        self.split_actions=True
         self.egocentric_movement=True
         self.length_corridors=[30, 30]
         self.max_move= 15
@@ -54,6 +54,7 @@ class Config:
         self.B = 1
         self.label_noise = 0
         self.isotropic_noise = 0
+        self.bias_batch = None
 
 class action_handler:
     def __init__(self, C):
@@ -184,7 +185,7 @@ def create_data(C):
     return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
 
 
-def train_model(C: Config, X, y, model):
+def train_model(C: Config, X, y, model, action_taken):
     with torch.no_grad():
         outputs, hidden_states = model(X)
         if C.print_progress:
@@ -207,7 +208,12 @@ def train_model(C: Config, X, y, model):
             X_batch = X
             y_batch = y
         else:
-            batch_inds = np.random.choice(X.shape[0], size=int(C.B*X.shape[0]), replace=False)
+            if C.bias_batch:
+                p = (C.max_move - abs(action_taken) + 1)**C.bias_batch
+                p = p / p.sum()
+            else:
+                p = None
+            batch_inds = np.random.choice(X.shape[0], size=int(C.B*X.shape[0]), replace=True, p=p)
             X_batch = X[batch_inds]
             y_batch = y[batch_inds]
         optimizer.zero_grad()
@@ -226,8 +232,8 @@ def train_model(C: Config, X, y, model):
                 outputs, hidden_states = model(X)
                 hidden_l.append([h.cpu().detach().numpy() for h in hidden_states])
             if epoch in sample_inds:
-                # outputs, hidden_states = model(X)
-                # loss = criterion(outputs, y)
+                outputs, hidden_states = model(X)
+                loss = criterion(outputs, y)
                 loss_l.append(loss.item()/y_var)
                 if C.one_hot_inputs:
                     accuracy_l.append((outputs.argmax(dim=1) == y.argmax(dim=1)).float().mean().item())
@@ -249,14 +255,14 @@ def run_sim(C: Config):
     X = torch.tensor(X, dtype=torch.float32).to(device)
     y = torch.tensor(y, dtype=torch.float32).to(device)
 
+    C.G = ((C.sig_h_2*(X.shape[1]+C.hidden_size)/(2*X.shape[1]*X.var()))**(1/(2*C.L))).item()
     if C.sig_h_2 and C.print_progress:
-        C.G = (C.sig_h_2*(X.shape[1]+C.hidden_size)/(2*X.shape[1]*X.var()))**(1/(2*C.L))
         print(f'Changed G to {C.G} to get sig_h_2 = {C.sig_h_2}')
     # Create model
     model = DNN(input_size + n_actions, C.hidden_size, output_size, C.L, C.fixed_output, C.linear_net, C.G, C.bias).to(device)
     initial_weights = deepcopy(model.state_dict())
 
-    loss_l, accuracy_l, hidden_l = train_model(C, X, y, model)
+    loss_l, accuracy_l, hidden_l = train_model(C, X, y, model, action_taken)
     # Testing
     with torch.no_grad():
         outputs, hidden_states = model(X)
