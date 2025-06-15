@@ -1,3 +1,4 @@
+from itertools import product
 import numpy as np
 from scipy.sparse.linalg import svds
 from sklearn.linear_model import LinearRegression
@@ -142,3 +143,83 @@ def calc_PR(h):
     eigenvalues = np.linalg.eigvalsh(cov)
     eigenvalues = np.sort(eigenvalues)[::-1]
     return np.sum(eigenvalues)**2 / np.sum(eigenvalues**2)
+
+
+# PCA function using SVD
+def pca_torch(X, k=None):
+    # Center the data
+    X_centered = X - X.mean(dim=0, keepdim=True)
+
+    # SVD decomposition
+    U, S, Vt = torch.linalg.svd(X_centered, full_matrices=False)
+
+    # Select top-k components if specified
+    if k is not None:
+        S = S[:k]
+        Vt = Vt[:k]
+
+    # Compute explained variance
+    n_samples = X.shape[0]
+    explained_variance = (S ** 2) / (n_samples - 1)
+
+    # Total variance is the sum of variances of all features
+    total_var = X_centered.var(dim=0, unbiased=True).sum()
+    explained_variance_ratio = explained_variance / total_var
+
+    return {
+        'components': Vt,  # shape: (k, n_features)
+        'explained_variance': explained_variance.cpu().numpy(),  # shape: (k,)
+        'explained_variance_ratio': explained_variance_ratio.cpu().numpy()  # shape: (k,)
+    }
+
+
+def get_all_key_combinations(my_dict):
+    # Get keys and lists of values
+    keys = list(my_dict.keys())
+    values_lists = [my_dict[key] for key in keys]
+
+    # Iterate over all combinations
+    combinations = []
+    for combination in product(*values_lists):
+        current = dict(zip(keys, combination))
+        combinations.append(current)  # current is a dict: {key: value, ...}
+    return combinations
+
+def factorize_matrix(M, N=None):
+    D1, D2 = M.shape
+    # Compute full SVD
+    U, S, Vt = np.linalg.svd(M, full_matrices=False)
+    rank = np.sum(S > 1e-10)  # numerical rank
+
+    if N is None:
+        N = min(D1,D2)  # default N to rank(M)
+    
+    # Handle case where N > min(D1,D2)
+    if N > min(D1,D2):
+        # Pad U with random orthonormal columns
+        U_extra = np.random.randn(D1, N - min(D1,D2))
+        U_extra, _ = np.linalg.qr(U_extra)
+        U = np.hstack([U, U_extra])
+        
+        # Pad S with zeros
+        S = np.pad(S, (0, N - len(S)), mode='constant')
+        
+        # Pad Vt with random orthonormal rows
+        Vt_extra = np.random.randn(N - min(D1,D2), D2) 
+        Vt_extra, _ = np.linalg.qr(Vt_extra.T)
+        Vt_extra = Vt_extra.T
+        Vt = np.vstack([Vt, Vt_extra])
+
+    # Take N components
+    U_N = U[:, :N]
+    S_N = np.diag(S[:N])
+    Vt_N = Vt[:N, :]
+
+    # Generate random orthogonal matrix
+    Q = np.random.randn(N, N)
+    Q, _ = np.linalg.qr(Q)
+    
+    # Create random factorization that still reconstructs M
+    A = U_N @ np.sqrt(S_N) @ Q
+    B = Q.T @ np.sqrt(S_N) @ Vt_N
+    return A, B

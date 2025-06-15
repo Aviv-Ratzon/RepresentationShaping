@@ -2,3 +2,10 @@
 /.venv
 /.vscode
 /results
+__pycache__/model.cpython-310.pyc
+__pycache__/model.cpython-310.pyc
+__pycache__/run_sim.cpython-310.pyc
+__pycache__/utils.cpython-310.pyc
+data_dict_l.pkl
+data_dict_l_from_scan.pkl
+data_dict_l_from_scan_lr_0.01.pkl
