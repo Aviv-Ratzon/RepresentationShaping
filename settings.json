@@ -1,0 +1,27 @@
+{
+    "window.commandCenter": 1,
+    "git.enableSmartCommit": true,
+    "workbench.colorTheme": "Default Dark+",
+    "toggler.toggles": [
+
+
+        [
+            "absolute",
+            "relative"
+        ],
+        [
+            "high",
+            "low"
+        ],
+        [
+            "SGD",
+            "Adam"
+        ],
+        [
+            "CrossEntropyLoss",
+            "MSELoss"
+        ]
+    ],
+    "terminal.integrated.defaultProfile.windows": "Command Prompt",
+    "files.autoSave": "afterDelay"
+}
