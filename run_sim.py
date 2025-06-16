@@ -53,6 +53,7 @@ class Config:
         self.lambda_reg = 0
         self.B = 1
         self.label_noise = 0
+        self.isotropic_noise = 0
 
 class action_handler:
     def __init__(self, C):
@@ -175,6 +176,11 @@ def create_data(C):
         pca = PCA(whiten=True)
         X = pca.fit_transform(X)
 
+    if C.print_progress:
+        print(f'Number of samples: {X.shape[0]}')
+        print(f'Input dimension: {X.shape[1]}')
+        print(f'Output dimension: {y.shape[1]}')
+        print(f'Number of actions: {n_actions}\n')
     return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
 
 
@@ -197,11 +203,21 @@ def train_model(C: Config, X, y, model):
     hidden_l = []
     sample_inds = np.unique(np.linspace(0, C.num_epochs-1, 10000).astype(int))
     for epoch in tqdm(range(C.num_epochs)) if C.print_progress else range(C.num_epochs):
-        batch_inds = np.random.choice(X.shape[0], size=int(C.B*X.shape[0]), replace=False)
+        if C.B == 1:
+            X_batch = X
+            y_batch = y
+        else:
+            batch_inds = np.random.choice(X.shape[0], size=int(C.B*X.shape[0]), replace=False)
+            X_batch = X[batch_inds]
+            y_batch = y[batch_inds]
         optimizer.zero_grad()
-        outputs, hidden_states = model(X[batch_inds])
-        loss = criterion(outputs, y[batch_inds] + torch.randn_like(y[batch_inds]) + C.label_noise)
+        outputs, hidden_states = model(X_batch)
+        if not isinstance(criterion, nn.CrossEntropyLoss):
+            y_batch = y_batch + torch.randn_like(y_batch) * C.label_noise
+        loss = criterion(outputs, y_batch)
         loss.backward()
+        for param in model.parameters():
+            param.grad += torch.randn_like(param.grad) * C.isotropic_noise
         optimizer.step()
         # if (epoch + 1) % int(C.num_epochs/10) == 0 and C.print_progress:
         #     print(f"Epoch {epoch + 1}/{C.num_epochs}, Loss: {loss_l[-1]:.4f}")
@@ -210,8 +226,8 @@ def train_model(C: Config, X, y, model):
                 outputs, hidden_states = model(X)
                 hidden_l.append([h.cpu().detach().numpy() for h in hidden_states])
             if epoch in sample_inds:
-                outputs, hidden_states = model(X)
-                loss = criterion(outputs, y)
+                # outputs, hidden_states = model(X)
+                # loss = criterion(outputs, y)
                 loss_l.append(loss.item()/y_var)
                 if C.one_hot_inputs:
                     accuracy_l.append((outputs.argmax(dim=1) == y.argmax(dim=1)).float().mean().item())

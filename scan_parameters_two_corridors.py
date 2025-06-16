@@ -20,11 +20,11 @@ from utils import cosine_similarity, get_all_key_combinations, get_r_2, vector_a
 num_workers = 8
 gpu_ids = np.arange(8)
 use_gpu = True
-debug = False
+debug = True
 result_path = './results/sweep_results_linear/MSE/again'
 modify_vars = {
     'B': [0.1, 0.5, 1],
-    'label_noise': [0, 0.01, 0.1],
+    'label_noise': [0.1, 0.01, 0],
     'max_move': [1, 10]
 }
 base_params = {
