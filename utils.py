@@ -247,7 +247,7 @@ def compute_hessian(W_l, x, target, loss_fn='CE'):
 
     # Loss (mean squared error)
     if loss_fn == 'CE':
-        probs = F.softmax(out)
+        probs = F.softmax(out, dim=1)
         loss = F.cross_entropy(probs, target)
     elif loss_fn == 'MSE':
         loss = F.mse_loss(out, target)
@@ -294,8 +294,7 @@ def compute_gradient(W_l, x, target, loss_fn='CE'):
 
     # Loss (mean squared error)
     if loss_fn == 'CE':
-        probs = F.softmax(out)
-        loss = F.cross_entropy(probs, target)
+        loss = F.cross_entropy(out, target)
     elif loss_fn == 'MSE':
         loss = F.mse_loss(out, target)
     else:
@@ -309,3 +308,13 @@ def compute_gradient(W_l, x, target, loss_fn='CE'):
     grads_vector = torch.cat([g.view(-1) for g in grads])
     
     return grads_vector
+
+def normalize_W_l(W_l, norm=100):
+    if isinstance(W_l[0], torch.Tensor):
+        theta = torch.concatenate([W.flatten() for W in W_l])
+        factor = torch.linalg.norm(theta)/norm
+        return [W/factor for W in W_l]
+    else:
+        theta = np.concatenate([W.flatten() for W in W_l])
+        factor = np.linalg.norm(theta)/norm
+    return [W/factor for W in W_l]
