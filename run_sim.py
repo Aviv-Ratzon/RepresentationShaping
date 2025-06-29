@@ -55,6 +55,7 @@ class Config:
         self.label_noise = 0
         self.isotropic_noise = 0
         self.bias_batch = None
+        self.state_dict_path = None
 
 class action_handler:
     def __init__(self, C):
@@ -260,6 +261,8 @@ def run_sim(C: Config):
         print(f'Changed G to {C.G} to get sig_h_2 = {C.sig_h_2}')
     # Create model
     model = DNN(input_size + n_actions, C.hidden_size, output_size, C.L, C.fixed_output, C.linear_net, C.G, C.bias).to(device)
+    if C.state_dict_path is not None:
+        model.load_state_dict(torch.load(C.state_dict_path))
     initial_weights = deepcopy(model.state_dict())
 
     loss_l, accuracy_l, hidden_l = train_model(C, X, y, model, action_taken)
