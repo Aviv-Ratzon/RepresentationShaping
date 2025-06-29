@@ -3,6 +3,8 @@ from torch import nn
 
 from utils_plot import plot_loss_and_dist, plot_pca
 from run_sim import run_sim_wrapper, Config
+from utils import compute_hessian
+import matplotlib.pyplot as plt
 
 C = Config()
 
@@ -32,3 +34,12 @@ data_dict = run_sim_wrapper(C)
 
 plot_loss_and_dist(data_dict)
 plot_pca(data_dict)
+
+H = compute_hessian(data_dict)
+eigs, eigs_v = torch.linalg.eigh(H)
+
+plt.plot(sorted(abs(eigs).cpu().numpy()))
+plt.yscale('log')
+plt.show()
+
+perturb_model_dict(data_dict['final_weights'], eigs_v[abs(eigs).argmin()], norm=1)

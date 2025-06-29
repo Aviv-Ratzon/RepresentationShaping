@@ -228,7 +228,7 @@ def factorize_matrix(M, N=None):
 
 def compute_hessian(data_dict):
     x = data_dict['X']; target = data_dict['y']; final_weights = data_dict['final_weights']
-    loss_fn = 'CE' if isinstance(data_dict['loss_fn'], torch.nn.CrossEntropyLoss) else 'MSE'
+    loss_fn = 'CE' if isinstance(data_dict['C'].loss_fn, torch.nn.CrossEntropyLoss) else 'MSE'
     """
     Compute the Hessian of MSE loss w.r.t. the flattened parameters.
 
@@ -321,3 +321,19 @@ def normalize_W_l(W_l, norm=100):
         theta = np.concatenate([W.flatten() for W in W_l])
         factor = np.linalg.norm(theta)/norm
     return [W/factor for W in W_l]
+
+def perturb_model_dict(model_dict, direction, norm=1):
+    device = next(iter(model_dict.values())).device
+    direction = direction.to(device)
+    W_l = [W.clone().detach() for W in model_dict.values()]
+    shapes = [W.shape for W in W_l]
+    sizes = [W.numel() for W in W_l]
+    theta = torch.concatenate([W.view(-1) for W in model_dict.values()])
+    theta += direction * norm / torch.linalg.norm(direction).to(device)
+    W_l_new = []
+    idx = 0
+    for shape, size in zip(shapes, sizes):
+        W_l_new.append(theta[idx:idx+size].view(shape))
+        idx += size
+    new_model_dict = {k:v for k, v in zip(model_dict.keys(), W_l_new)}
+    return new_model_dict
