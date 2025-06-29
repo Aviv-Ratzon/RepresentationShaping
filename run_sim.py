@@ -273,3 +273,27 @@ def run_sim(C: Config):
 
 
     return X, y, corridor, loc_X.squeeze(), loc_y.squeeze(), action_taken, hidden_states, loss_l, accuracy_l, outputs.cpu().numpy(), hidden_l, model.state_dict(), initial_weights
+
+
+
+def run_sim_wrapper(C):
+    X, y, corridor, loc_X, loc_y, action_taken, hidden_states, loss_l, accuracy_l, outputs, hidden_l, final_weights, initial_weights = run_sim(C)
+
+    data_dict = {
+        'X': X,
+        'y': y,
+        'corridor': corridor,
+        'loc_X': loc_X.squeeze(),
+        'loc_y': loc_y.squeeze(),
+        'action_taken': action_taken,
+        'hidden_states': hidden_states,
+        'loss_l': loss_l,
+        'accuracy_l': accuracy_l,
+        'outputs': outputs,
+        'hidden_l': hidden_l,
+        'initial_weights': initial_weights,
+        'final_weights': final_weights,
+        'C': C
+    }
+
+    return data_dict
