@@ -8,9 +8,6 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 import torch
 
-from converge_cases import data_dict
-from test_run_sim import final_weights
-
 
 def cosine_similarity(a, b):
     if isinstance(a, np.ndarray) and isinstance(b, np.ndarray):

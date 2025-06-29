@@ -1,24 +1,8 @@
-from matplotlib import pyplot as plt
-from scipy.spatial.distance import cdist
-from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.manifold import TSNE
-from sklearn.decomposition import PCA
-from sklearn.metrics import accuracy_score
-import numpy as np
-from copy import deepcopy
-
 import torch
 from torch import nn
 
-from run_sim import Config, run_sim
-from utils import cosine_similarity, get_r_2, vector_angle
-from tqdm import tqdm
-from utils import alignment_score, calc_PR, calc_NC1
-import matplotlib as mpl
-from functools import reduce
-
 from utils_plot import plot_loss_and_dist, plot_pca
-from run_sim import run_sim_wrapper
+from run_sim import run_sim_wrapper, Config
 
 C = Config()
 
