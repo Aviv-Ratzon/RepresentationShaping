@@ -17,7 +17,7 @@ use_gpu = True
 class Config:
     def __init__(self, **entries):
         # Meta
-        self.gpu_id=2
+        self.gpu_id=0
         self.seed=0
         self.print_progress=False
 

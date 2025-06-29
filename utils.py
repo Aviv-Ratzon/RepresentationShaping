@@ -8,6 +8,10 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 import torch
 
+from converge_cases import data_dict
+from test_run_sim import final_weights
+
+
 def cosine_similarity(a, b):
     if isinstance(a, np.ndarray) and isinstance(b, np.ndarray):
         return np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b))
@@ -225,7 +229,9 @@ def factorize_matrix(M, N=None):
     return A, B
 
 
-def compute_hessian(W_l, x, target, loss_fn='CE'):
+def compute_hessian(data_dict):
+    x = data_dict['X']; target = data_dict['y']; final_weights = data_dict['final_weights']
+    loss_fn = 'CE' if isinstance(data_dict['loss_fn'], torch.nn.CrossEntropyLoss) else 'MSE'
     """
     Compute the Hessian of MSE loss w.r.t. the flattened parameters.
 
@@ -238,7 +244,7 @@ def compute_hessian(W_l, x, target, loss_fn='CE'):
         torch.Tensor: 2D Hessian matrix of shape (num_params, num_params).
     """
     # Make sure weights require gradients
-    W_l = [w.clone().detach().requires_grad_(True) for w in W_l]
+    W_l = [w.clone().detach().requires_grad_(True) for w in final_weights.values()]
 
     # Forward pass through layers
     out = x
