@@ -189,8 +189,8 @@ def create_data(C):
 def train_model(C: Config, X, y, model, action_taken):
     with torch.no_grad():
         outputs, hidden_states = model(X)
-        if C.print_progress:
-            print(f'Sig_2 of last hidden: {hidden_states[-1].var().item()}')
+        # if C.print_progress:
+        #     print(f'Sig_2 of last hidden: {hidden_states[-1].var().item()}')
 
     # Loss function and optimizer
     criterion = C.loss_fn
@@ -228,10 +228,12 @@ def train_model(C: Config, X, y, model, action_taken):
         optimizer.step()
         # if (epoch + 1) % int(C.num_epochs/10) == 0 and C.print_progress:
         #     print(f"Epoch {epoch + 1}/{C.num_epochs}, Loss: {loss_l[-1]:.4f}")
+        
         with torch.no_grad():
             if epoch in sample_inds[::10]:
                 outputs, hidden_states = model(X)
                 hidden_l.append([h.cpu().detach().numpy() for h in hidden_states])
+
             if epoch in sample_inds:
                 outputs, hidden_states = model(X)
                 loss = criterion(outputs, y)
@@ -257,8 +259,8 @@ def run_sim(C: Config):
     y = torch.tensor(y, dtype=torch.float32).to(device)
 
     C.G = ((C.sig_h_2*(X.shape[1]+C.hidden_size)/(2*X.shape[1]*X.var()))**(1/(2*C.L))).item()
-    if C.sig_h_2 and C.print_progress:
-        print(f'Changed G to {C.G} to get sig_h_2 = {C.sig_h_2}')
+    # if C.sig_h_2 and C.print_progress:
+    #     print(f'Changed G to {C.G} to get sig_h_2 = {C.sig_h_2}')
     # Create model
     model = DNN(input_size + n_actions, C.hidden_size, output_size, C.L, C.fixed_output, C.linear_net, C.G, C.bias).to(device)
     if C.state_dict_path is not None:

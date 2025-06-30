@@ -1,12 +1,11 @@
 from itertools import product
+from functools import reduce
+import numpy as np
 import torch
 import torch.nn.functional as F
-
-import numpy as np
 from scipy.sparse.linalg import svds
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
-import torch
 
 
 def cosine_similarity(a, b):
@@ -36,8 +35,8 @@ def get_upper_triangle(matrix):
     return matrix[np.triu_indices(n, k=1)]
 
 import numpy as np
-from scipy.linalg import svd
-from scipy.linalg import subspace_angles
+from scipy.linalg import subspace_angles, svd
+
 
 def compute_covariance(X):
     X_centered = X - np.mean(X, axis=0)
@@ -226,20 +225,11 @@ def factorize_matrix(M, N=None):
     return A, B
 
 
-def compute_hessian(data_dict):
+def compute_hessian(data_dict, normalize=None):
     x = data_dict['X']; target = data_dict['y']; final_weights = data_dict['final_weights']
     loss_fn = 'CE' if isinstance(data_dict['C'].loss_fn, torch.nn.CrossEntropyLoss) else 'MSE'
-    """
-    Compute the Hessian of MSE loss w.r.t. the flattened parameters.
-
-    Args:
-        W_l (list of torch.Tensor): List of weight matrices (no bias).
-        x (torch.Tensor): Input tensor of shape (batch_size, in_features).
-        target (torch.Tensor): Target tensor of shape (batch_size, out_features).
-
-    Returns:
-        torch.Tensor: 2D Hessian matrix of shape (num_params, num_params).
-    """
+    if normalize:
+        final_weights = normalize_state_dict(final_weights, normalize)
     # Make sure weights require gradients
     W_l = [w.clone().detach().requires_grad_(True) for w in final_weights.values()]
 
@@ -275,20 +265,13 @@ def compute_hessian(data_dict):
     return hessian
 
 
-def compute_gradient(W_l, x, target, loss_fn='CE'):
-    """
-    Compute the Hessian of MSE loss w.r.t. the flattened parameters.
-
-    Args:
-        W_l (list of torch.Tensor): List of weight matrices (no bias).
-        x (torch.Tensor): Input tensor of shape (batch_size, in_features).
-        target (torch.Tensor): Target tensor of shape (batch_size, out_features).
-
-    Returns:
-        torch.Tensor: 2D Hessian matrix of shape (num_params, num_params).
-    """
+def compute_gradient(data_dict, normalize=None):
+    x = data_dict['X']; target = data_dict['y']; final_weights = data_dict['final_weights']
+    loss_fn = 'CE' if isinstance(data_dict['C'].loss_fn, torch.nn.CrossEntropyLoss) else 'MSE'
+    if normalize:
+        final_weights = normalize_state_dict(final_weights, normalize)
     # Make sure weights require gradients
-    W_l = [w.clone().detach().requires_grad_(True) for w in W_l]
+    W_l = [w.clone().detach().requires_grad_(True) for w in final_weights.values()]
 
     # Forward pass through layers
     out = x
@@ -322,18 +305,89 @@ def normalize_W_l(W_l, norm=100):
         factor = np.linalg.norm(theta)/norm
     return [W/factor for W in W_l]
 
-def perturb_model_dict(model_dict, direction, norm=1):
+def normalize_state_dict(model_dict, norm=100):
+    device = next(iter(model_dict.values())).device
+    W_l = [W.clone().detach() for W in model_dict.values()]
+    shapes = [W.shape for W in W_l]
+    sizes = [W.numel() for W in W_l]
+    theta = torch.concatenate([W.reshape(-1) for W in model_dict.values()])
+    theta = theta * norm / torch.linalg.norm(theta)
+    W_l_new = []
+    idx = 0
+    for shape, size in zip(shapes, sizes):
+        W_l_new.append(theta[idx:idx+size].reshape(shape))
+        idx += size
+    new_model_dict = {k:v for k, v in zip(model_dict.keys(), W_l_new)}
+    return new_model_dict
+
+def perturb_model_dict(model_dict, direction, norm=1, normalize=None):
     device = next(iter(model_dict.values())).device
     direction = direction.to(device)
     W_l = [W.clone().detach() for W in model_dict.values()]
     shapes = [W.shape for W in W_l]
     sizes = [W.numel() for W in W_l]
-    theta = torch.concatenate([W.view(-1) for W in model_dict.values()])
+    theta = torch.concatenate([W.reshape(-1) for W in model_dict.values()])
     theta += direction * norm / torch.linalg.norm(direction).to(device)
+    if normalize:
+        theta = theta * normalize / torch.linalg.norm(theta)
     W_l_new = []
     idx = 0
     for shape, size in zip(shapes, sizes):
-        W_l_new.append(theta[idx:idx+size].view(shape))
+        W_l_new.append(theta[idx:idx+size].reshape(shape))
         idx += size
     new_model_dict = {k:v for k, v in zip(model_dict.keys(), W_l_new)}
     return new_model_dict
+
+def get_loss(data_dict, normalize=None):
+    x = data_dict['X']; target = data_dict['y']; final_weights = data_dict['final_weights']
+    loss_fn = 'CE' if isinstance(data_dict['C'].loss_fn, torch.nn.CrossEntropyLoss) else 'MSE'
+    if normalize:
+        final_weights = normalize_state_dict(final_weights, normalize)
+    W_effective = reduce(torch.matmul, [W.T for W in final_weights.values()])
+    out = x @ W_effective
+    if loss_fn == 'CE':
+        loss = F.cross_entropy(out, target)
+    elif loss_fn == 'MSE':
+        loss = F.mse_loss(out, target)
+    else:
+        raise ValueError(f"Invalid loss function: {loss_fn}")
+    return loss.item()
+
+def get_AB(X, w1, w2, b, n):
+    # Step 1: Compute target matrix
+    Y = (X @ w1) @ w2 + np.ones((X.shape[0], 1)) @ b  # (m, c)
+
+    # Step 2: Compute effective Z = X^\dagger Y
+    X_dagger = np.linalg.pinv(X)                     # (d, m)
+    Z = X_dagger @ Y                                 # (d, c)
+
+    # Step 3: Low-rank SVD factorization
+    U, S, Vt = np.linalg.svd(Z, full_matrices=False)
+    n_max = min(n, min(Z.shape))  # Don't take more components than available
+    U_n = np.zeros((U.shape[0], n))  # Initialize with zeros
+    S_n = np.zeros((n, n))  # Initialize diagonal matrix with zeros
+    Vn = np.zeros((n, Vt.shape[1]))  # Initialize with zeros
+    
+    # Fill available components
+    U_n[:, :n_max] = U[:, :n_max]
+    S_n[:n_max, :n_max] = np.diag(np.sqrt(S[:n_max]))
+    Vn[:n_max, :] = Vt[:n_max, :]
+
+    A = U_n @ S_n                  # (d, n)
+    B = S_n @ Vn                   # (n, c)
+    return A, B
+
+def make_synthetic_model_dict(data_dict, normalize=None):
+    X_np = data_dict['X'].cpu().numpy()
+    y_np = data_dict['y'].cpu().numpy()
+    C = data_dict['C']
+    L = C.length_corridors[0]
+    A = C.max_move
+    n_model = 1
+    Win = np.concatenate([np.arange(1,L+1, 1), np.arange(-A,A+1)])[:,None]
+    Wout = 1/n_model*np.arange(1,L+1, 1)[None,:]**n_model
+    b = -1/(n_model+1)*np.arange(1,L+1, 1)[None, :]**(n_model+1)
+
+    W1,W2 = get_AB(X_np, Win, Wout, b, C.hidden_size)
+    W_l = [torch.tensor(W1.T, dtype=torch.float32), torch.tensor(W2.T, dtype=torch.float32)]
+    return W_l
