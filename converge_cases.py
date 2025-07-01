@@ -29,7 +29,6 @@ C.loss_fn = nn.CrossEntropyLoss()
 data_dict = run_sim_wrapper(C)
 
 # plot_loss_and_dist(data_dict)
-data_dict['loc_y'] = data_dict['loc_y'][:, 0]
 plot_pca(data_dict)
 torch.save(data_dict['final_weights'], 'model_state_dict.pth')
 
@@ -150,59 +149,6 @@ print(f"Accuracy of logistic regression: {accuracy_score((X_np@W_logistic_noreg.
 # Verify it matches the sklearn score
 print(f"Manual accuracy matches sklearn score: {abs(svm_accuracy - svm_manual_accuracy) < 1e-10}")
 
-def factorize_matrix_to_L_matrices(W, L, N=None):
-    """
-    Factorize a matrix W into L matrices with intermediate dimension N.
-    
-    Args:
-        W: Input matrix of shape (m, n)
-        L: Number of matrices to factorize into
-        N: Intermediate dimension. If None, uses min(m, n)
-    
-    Returns:
-        List of L matrices whose multiplication equals W
-    """
-    m, n = W.shape
-    
-    if N is None:
-        N = min(m, n)
-    
-    # Initialize matrices randomly
-    matrices = []
-    
-    # First matrix: shape (m, N)
-    matrices.append(torch.randn(m, N, requires_grad=True))
-    
-    # Middle matrices: shape (N, N)
-    for i in range(L - 2):
-        matrices.append(torch.randn(N, N, requires_grad=True))
-    
-    # Last matrix: shape (N, n)
-    matrices.append(torch.randn(N, n, requires_grad=True))
-    print([W.shape for W in matrices])
-    
-    # Optimize to find the factorization
-    optimizer = torch.optim.Adam(matrices, lr=0.00001)
-    
-    n_steps = 100000
-    for step in range(n_steps):
-        optimizer.zero_grad()
-        
-        # Compute the product of all matrices
-        product = matrices[0]
-        for i in range(1, L):
-            product = product @ matrices[i]
-
-        # Compute loss (MSE between product and target W)
-        loss = torch.nn.functional.mse_loss(product, W)
-        
-        loss.backward()
-        optimizer.step()
-        
-        if step % (n_steps//10) == 0:
-            print(f"Step {step}, Loss: {loss.item():.6f}")
-    
-    return matrices
 
 W_logistic = torch.tensor(W_logistic_noreg).float()
 W_l_logsitic_factorized = factorize_matrix_to_L_matrices(W_logistic.T, C.L+1, C.hidden_size)
