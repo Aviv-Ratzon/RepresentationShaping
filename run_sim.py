@@ -229,6 +229,22 @@ def train_model(C: Config, X, y, model, action_taken):
         # if (epoch + 1) % int(C.num_epochs/10) == 0 and C.print_progress:
         #     print(f"Epoch {epoch + 1}/{C.num_epochs}, Loss: {loss_l[-1]:.4f}")
         
+        ############
+        model_dict = model.state_dict()
+        W_l = [W.clone().detach() for W in model_dict.values()]
+        shapes = [W.shape for W in W_l]
+        sizes = [W.numel() for W in W_l]
+        theta = torch.concatenate([W.reshape(-1) for W in model_dict.values()])
+        theta = theta * 10 / torch.linalg.norm(theta)
+        W_l_new = []
+        idx = 0
+        for shape, size in zip(shapes, sizes):
+            W_l_new.append(theta[idx:idx+size].reshape(shape))
+            idx += size
+        new_model_dict = {k:v for k, v in zip(model_dict.keys(), W_l_new)}
+        model.load_state_dict(new_model_dict)
+        ############
+
         with torch.no_grad():
             if epoch in sample_inds[::10]:
                 outputs, hidden_states = model(X)

@@ -2,6 +2,7 @@ from matplotlib import pyplot as plt
 import torch
 from sklearn.decomposition import PCA
 import numpy as np
+from utils import calc_PR, compute_gradient, get_loss
 
 
 def plot_loss_and_dist(data_dict):
@@ -13,7 +14,7 @@ def plot_loss_and_dist(data_dict):
     hidden_dist = torch.cdist(hidden_states[-1].detach(), hidden_states[-1].detach()).cpu().numpy()
     indices = np.lexsort((loc_y, corridor))
     # indices = indices[action_taken[indices]==0]
-    fig, axs = plt.subplots(2, 3, figsize=(15, 10))
+    fig, axs = plt.subplots(2, 3, figsize=(15/2, 10/2))
     axs[0, 0].set_axis_off();
     axs[0, 2].set_axis_off()
     axs[0, 1].plot(loss_l)
@@ -28,22 +29,26 @@ def plot_loss_and_dist(data_dict):
     plt.show()
 
 
-def plot_pca(data_dict):
+def plot_pca(data_dict, title=""):
     loc_y = data_dict['loc_y'];
     hidden_states = data_dict['hidden_states'];
     action_taken = data_dict['action_taken']
+    loss_l = data_dict['loss_l']; accuracy_l = data_dict['accuracy_l']
 
     h_np = hidden_states[-1].cpu().detach().numpy()
+    PR = calc_PR(h_np)
 
     pca = PCA().fit(h_np)
     X_reduced = pca.transform(h_np)
-    fig, axs = plt.subplots(1, 3, figsize=(15, 5))
+    fig, axs = plt.subplots(1, 4, figsize=(20/2, 5/2))
+    fig.suptitle(title)
     # Add cumulative explained variance ratio in the first row
     ax1 = axs[0]
     ax1.plot(np.cumsum(pca.explained_variance_ratio_), marker='o')
     ax1.set_xlabel('Number of Components')
-    ax1.set_ylabel('Cumulative Explained Variance')
-    ax1.set_title(f'Cumulative Explained Variance Ratio')
+    ax1.set_ylabel('Cumulative EVR')
+    ax1.set_title(f'Cumulative EVR --- PR: {PR:.2f}')
+    ax1.set_ylim(-0.1, 1.1)
 
     ax1 = axs[1]
     s = ax1.scatter(X_reduced[:, 0], X_reduced[:, 1], c=loc_y, cmap='coolwarm', alpha=0.7)
@@ -54,5 +59,27 @@ def plot_pca(data_dict):
     ax1 = axs[2]
     ax1.scatter(X_reduced[:, 0], loc_y, c=loc_y)
 
+    axs[3].plot(loss_l)
+    axs[3].set_yscale('log')
+    axs[3].twinx().plot(accuracy_l, 'r')
+    axs[3].set_title("Loss")
+
     plt.tight_layout()
+    plt.show()
+
+
+def plot_solution_direction_loss_space(data_dict_l, labels_l):
+    norm_l = np.linspace(0.1, 50, 1000)
+    plt.figure(figsize=(20, 5))
+    ax1 = plt.gca()
+    ax2 = ax1.twinx()
+    for data_dict, label in zip(data_dict_l, labels_l):
+        ax1.plot(norm_l, [get_loss(data_dict, normalize=norm) for norm in norm_l], label=label)
+        ax2.plot(norm_l, [torch.norm(compute_gradient(data_dict, normalize=norm)).item() for norm in norm_l], label=label, ls='--', alpha=0.7)
+    ax1.set_yscale('log')
+    ax2.set_yscale('log')
+    ax1.set_xlabel('Normalization Factor')
+    ax1.set_ylabel('Loss')
+    ax2.set_ylabel('Gradient Norm')
+    plt.legend()
     plt.show()

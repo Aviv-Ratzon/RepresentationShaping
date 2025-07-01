@@ -377,7 +377,7 @@ def get_AB(X, w1, w2, b, n):
     B = S_n @ Vn                   # (n, c)
     return A, B
 
-def make_synthetic_model_dict(data_dict, normalize=None):
+def make_synthetic_model_dict(data_dict):
     X_np = data_dict['X'].cpu().numpy()
     y_np = data_dict['y'].cpu().numpy()
     C = data_dict['C']
@@ -389,5 +389,72 @@ def make_synthetic_model_dict(data_dict, normalize=None):
     b = -1/(n_model+1)*np.arange(1,L+1, 1)[None, :]**(n_model+1)
 
     W1,W2 = get_AB(X_np, Win, Wout, b, C.hidden_size)
-    W_l = [torch.tensor(W1.T, dtype=torch.float32), torch.tensor(W2.T, dtype=torch.float32)]
-    return W_l
+    W2 = torch.tensor(W2.T, dtype=torch.float32)
+    W = torch.tensor(W1, dtype=torch.float32)
+    W_l = factorize_matrix_to_L_matrices(W, C.L, C.hidden_size)
+    model_dict = {k:v for k, v in zip(data_dict['final_weights'].keys(), W_l + [W2])}
+    return model_dict
+
+
+def factorize_matrix_to_L_matrices(W, L, N=None):
+    """
+    Factorize a matrix W into L matrices with intermediate dimension N.
+    
+    Args:
+        W: Input matrix of shape (m, n)
+        L: Number of matrices to factorize into
+        N: Intermediate dimension. If None, uses min(m, n)
+    
+    Returns:
+        List of L matrices whose multiplication equals W
+    """
+    m, n = W.shape
+    if N is None:
+        N = min(m, n)
+    
+    # Calculate the scale factor to match W's scale
+    # For L matrices, we want their product to have similar scale as W
+    # If each matrix has scale s, then the product has scale s^L
+    # So we want s^L ≈ scale(W), which means s ≈ scale(W)^(1/L)
+    
+    # Initialize matrices randomly with appropriate scaling
+    matrices = []
+    
+    # First matrix: shape (m, N)
+    matrices.append(torch.randn(N, m, requires_grad=True))
+    
+    # Middle matrices: shape (N, N)
+    for i in range(L - 2):
+        matrices.append(torch.randn(N, N, requires_grad=True))
+    
+    # Last matrix: shape (N, n)
+    matrices.append(torch.randn(n, N, requires_grad=True))
+    
+    with torch.no_grad():
+        product = matrices[0].T
+        for i in range(1, L):
+            product = product @ matrices[i].T
+        scale_factor = (torch.norm(W) / torch.norm(product))**(1/L)
+        for w in matrices:
+            w *= scale_factor
+    
+    # Optimize to find the factorization
+    optimizer = torch.optim.Adam(matrices, lr=0.00001)
+    n_steps = 20000
+    for step in range(n_steps):
+        optimizer.zero_grad()
+        
+        # Compute the product of all matrices
+        product = matrices[0].T
+        for i in range(1, L):
+            product = product @ matrices[i].T
+
+        # Compute loss (MSE between product and target W)
+        loss = torch.nn.functional.mse_loss(product, W)
+        
+        loss.backward()
+        optimizer.step()
+        
+        if step % (n_steps//10) == 0:
+            print(f"Step {step}, Loss: {loss.item():.6f}")
+    return matrices

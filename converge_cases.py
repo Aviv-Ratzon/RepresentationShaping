@@ -1,15 +1,18 @@
-from sklearn.decomposition import PCA
-from sklearn.metrics import accuracy_score
-from sklearn.linear_model import LogisticRegression
-import torch
-from torch import nn
+import matplotlib.pyplot as plt
 import numpy as np
+import torch
+from sklearn.decomposition import PCA
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score
+from torch import nn
 from tqdm import tqdm
 
-from utils_plot import plot_loss_and_dist, plot_pca
-from run_sim import run_sim_wrapper, Config
-from utils import compute_hessian, get_r_2, normalize_state_dict, perturb_model_dict, get_loss, make_synthetic_model_dict
-import matplotlib.pyplot as plt
+from run_sim import Config, run_sim_wrapper
+from utils import (compute_gradient, compute_hessian, get_loss, get_r_2,
+                   make_synthetic_model_dict, normalize_state_dict,
+                   perturb_model_dict)
+from utils_plot import *
+import os
 
 C = Config()
 
@@ -18,21 +21,39 @@ C.linear_net = True
 C.learning_rate = 0.01
 C.L=8
 C.print_progress = True
-C.early_stopping = True
+C.early_stopping = False
 C.length_corridors = [10]*1
 C.max_move = 5
-C.hidden_size = 21
-C.num_epochs = 100000
+C.hidden_size = 25
+C.num_epochs = 1000000
 C.algo_name = 'SGD'
 C.loss_fn = nn.CrossEntropyLoss()
 
+
 data_dict = run_sim_wrapper(C)
+plot_pca(data_dict, title="Original")
+
+model_dict_synthetic = make_synthetic_model_dict(data_dict)
+C.state_dict_path = 'model_state_dict.pth'
+torch.save(model_dict_synthetic, 'model_state_dict.pth')
+
+C.early_stopping = False
+C.num_epochs = 0
+data_dict_synthetic = run_sim_wrapper(C)
+plot_pca(data_dict_synthetic, title="Synthetic")
+
+C.num_epochs = 100000
+data_dict_converged = run_sim_wrapper(C)
+plot_pca(data_dict_converged, title="Converged")
+
+# grad = compute_gradient(data_dict_synthetic, normalize=1)
 
 # plot_loss_and_dist(data_dict)
 plot_pca(data_dict)
 torch.save(data_dict['final_weights'], 'model_state_dict.pth')
 
 C.state_dict_path = 'model_state_dict.pth'
+
 C.early_stopping = False
 data_dict = run_sim_wrapper(C)
 
@@ -42,11 +63,11 @@ plot_loss_and_dist(data_dict)
 plot_pca(data_dict)
 
 print("Computing Hessians")
-H = compute_hessian(data_dict)
+H = compute_hessian(data_dict, normalize=3)
 print("Computing Eigenvalues")
 eigs, eigs_v = torch.linalg.eig(H)
 
-import os
+
 C.print_progress = False
 n_samples = 100
 accuracy_map = np.zeros((n_samples, n_samples))
@@ -66,9 +87,6 @@ for i, n_eigs in tqdm(enumerate(n_eigs_l)):
         accuracy_map[i, j] = accuracy
         r_2_map[i, j] = r_2
         os.remove('model_state_dict.pth')
-        if accuracy >=0.99 and r_2 < 0.5:
-            print(f"Accuracy of perturbed: {accuracy}, R^2: {r_2}, Norm: {norm}, N_eigs: {n_eigs}")
-            break
 
 map = r_2_map
 map[accuracy_map<0.99] = 1
@@ -110,24 +128,31 @@ print(f"Accuracy of converged: {(data_dict_converged['outputs'].argmax(1) == dat
 # plt.yscale('log')
 # plt.show()
 
-# W_l_synthetic = make_synthetic_model_dict(data_dict, normalize=None)
-# new_model_dict = {k:v for k, v in zip(data_dict['final_weights'].keys(), W_l_synthetic)}
-# torch.save(new_model_dict, 'model_state_dict.pth')
-# C.num_epochs = 0
-# data_dict_synthetic = run_sim_wrapper(C)
-# plot_pca(data_dict_synthetic)
+data_dict_l = [data_dict, data_dict_perturbed, data_dict_synthetic, data_dict_converged]
+labels_l = ['original', 'perturbed', 'synthetic', 'converged']
+plot_solution_direction_loss_space(data_dict_l, labels_l)
 
-norm_l = np.linspace(0.1, 50, 1000)
-plt.plot(norm_l, [get_loss(data_dict, normalize=norm) for norm in norm_l], label='original')
-plt.plot(norm_l, [get_loss(data_dict_perturbed, normalize=norm) for norm in norm_l], label='perturbed')
-plt.plot(norm_l, [get_loss(data_dict_converged, normalize=norm) for norm in norm_l], label='converged')
-# plt.plot(norm_l, [get_loss(data_dict_synthetic, normalize=norm) for norm in norm_l], label='synthetic')
+n_params = H.shape[0]
+new_weights = perturb_model_dict(data_dict['final_weights'], torch.randn(size=[n_params]), norm=1000, normalize=1)
+torch.save(new_weights, 'model_state_dict.pth')
+data_dict_random = run_sim_wrapper(C)
+
+data_dict_l = [data_dict]
+labels_l = ['original']
+plot_solution_direction_loss_space(data_dict_l, labels_l)
+
+H_random = compute_hessian(data_dict_random, normalize=10)
+H = compute_hessian(data_dict, normalize=10)
+eigs_random, eigs_v_random = torch.linalg.eig(H_random)
+eigs, eigs_v = torch.linalg.eig(H)
+eigs_random = eigs_random.cpu().numpy()
+eigs = eigs.cpu().numpy()
+
+# plt.plot(eigs_random, label='random', lw=1, alpha=0.7)
+plt.plot(eigs, label='original', ls='--', alpha=0.7)
 plt.legend()
-plt.yscale('log')
-plt.xlabel('Normalization Factor')
-plt.ylabel('Loss')
+plt.xscale('log')
 plt.show()
-
 
 X_np = data_dict['X'].cpu().numpy()
 y_np = data_dict['y'].cpu().numpy()
