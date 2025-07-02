@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from run_sim import Config, run_sim_wrapper
 from utils import (compute_gradient, compute_hessian, get_loss, get_r_2,
-                   make_synthetic_model_dict, normalize_state_dict,
+                   make_synthetic_model_dict, normalize_W_l, normalize_state_dict,
                    perturb_model_dict)
 from utils_plot import *
 import os
@@ -25,13 +25,14 @@ C.early_stopping = False
 C.length_corridors = [10]*1
 C.max_move = 5
 C.hidden_size = 25
-C.num_epochs = 1000000
+C.num_epochs = 100000
 C.algo_name = 'SGD'
 C.loss_fn = nn.CrossEntropyLoss()
 
 
 data_dict = run_sim_wrapper(C)
 plot_pca(data_dict, title="Original")
+
 
 model_dict_synthetic = make_synthetic_model_dict(data_dict)
 C.state_dict_path = 'model_state_dict.pth'
@@ -63,23 +64,23 @@ plot_loss_and_dist(data_dict)
 plot_pca(data_dict)
 
 print("Computing Hessians")
-H = compute_hessian(data_dict, normalize=3)
+H = compute_hessian(data_dict, normalize=None)
 print("Computing Eigenvalues")
 eigs, eigs_v = torch.linalg.eig(H)
-
 
 C.print_progress = False
 n_samples = 100
 accuracy_map = np.zeros((n_samples, n_samples))
 r_2_map = np.zeros((n_samples, n_samples))
-n_eigs_l = np.linspace(1, len(eigs)-1, n_samples).astype(int)
-norm_l = np.linspace(0.1, 100, n_samples)
+n_eigs_l = np.linspace(1, len(eigs), n_samples).astype(int)
+norm_l = np.linspace(1, 100, n_samples)
 for i, n_eigs in tqdm(enumerate(n_eigs_l)):
     for j, norm in enumerate(norm_l):
         new_weights = perturb_model_dict(data_dict['final_weights'], torch.real(eigs_v[:, abs(eigs).argsort()[:n_eigs]].mean(axis=1)), norm=norm, normalize=1)
         torch.save(new_weights, 'model_state_dict.pth')
 
         C.num_epochs = 0
+        C.state_dict_path = 'model_state_dict.pth'
         data_dict_perturbed = run_sim_wrapper(C)
         h_np = data_dict_perturbed['hidden_states'][-1].cpu().detach().numpy()
         accuracy = (data_dict_perturbed['outputs'].argmax(1) == data_dict_perturbed['y'].argmax(1)).float().mean()
@@ -92,6 +93,10 @@ map = r_2_map
 map[accuracy_map<0.99] = 1
 plt.imshow(map)
 plt.colorbar()
+plt.xticks(np.arange(len(norm_l))[::len(norm_l)//10], norm_l[::len(norm_l)//10].astype(int), rotation=45)
+plt.yticks(np.arange(len(n_eigs_l))[::len(n_eigs_l)//10], n_eigs_l[::len(n_eigs_l)//10], rotation=45)
+plt.xlabel('norm')
+plt.ylabel('n_eigs')
 plt.show()
 i_eigs, i_norm = np.unravel_index(np.argmin(map), map.shape)
 n_eigs = n_eigs_l[i_eigs]

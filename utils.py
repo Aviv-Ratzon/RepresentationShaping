@@ -458,3 +458,56 @@ def factorize_matrix_to_L_matrices(W, L, N=None):
         if step % (n_steps//10) == 0:
             print(f"Step {step}, Loss: {loss.item():.6f}")
     return matrices
+
+def compute_gradient_np(data_dict, normalize=None):
+    def softmax(z):
+        z = z - np.max(z)  # For numerical stability
+        exp_z = np.exp(z)
+        return exp_z / np.sum(exp_z)
+
+    def cross_entropy_grad(logits, y_true, num_classes):
+        return softmax(logits) - y_true
+
+    def forward_pass(x, weights):
+        activations = [x]
+        for W in weights:
+            x = W @ x
+            activations.append(x)
+        return activations
+
+    def compute_gradients(x, y, weights):
+        L = len(weights)
+        num_classes = weights[-1].shape[0]
+
+        # Forward pass
+        activations = forward_pass(x, weights)
+
+        # Backward pass
+        grads = [None] * L
+        delta = cross_entropy_grad(activations[-1], y, num_classes)
+
+        for i in reversed(range(L)):
+            a_prev = activations[i].reshape(-1, 1)
+            grads[i] = delta.reshape(-1, 1) @ a_prev.T
+            if i > 0:
+                delta = weights[i].T @ delta
+
+        # Flatten and concatenate all gradients into one vector
+        flat_grads = np.concatenate([g.flatten() for g in grads])
+        return flat_grads
+
+    W_l = [W.detach().cpu().numpy() for W in data_dict['final_weights'].values()]
+    if normalize:
+        W_l = normalize_W_l(W_l, normalize)
+    X_np = data_dict['X'].cpu().numpy()
+    y_np = data_dict['y'].cpu().numpy()
+    grad = [compute_gradients(x, y, W_l) for x,y in zip(X_np, y_np)]
+    grad = np.array(grad).mean(0)
+    return grad
+
+
+def get_state_dict_norm(model_dict):
+    device = next(iter(model_dict.values())).device
+    W_l = [W.clone().detach() for W in model_dict.values()]
+    theta = torch.concatenate([W.reshape(-1) for W in model_dict.values()])
+    return torch.linalg.norm(theta)
