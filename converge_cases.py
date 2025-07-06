@@ -8,7 +8,7 @@ from torch import nn
 from tqdm import tqdm
 
 from run_sim import Config, run_sim_wrapper
-from utils import (compute_gradient, compute_hessian, get_loss, get_r_2,
+from utils import (compute_gradient, compute_hessian, get_loss, get_r_2, grid_search_pert_direction,
                    make_synthetic_model_dict, normalize_W_l, normalize_state_dict,
                    perturb_model_dict)
 from utils_plot import *
@@ -18,14 +18,14 @@ C = Config()
 
 C.sig_h_2 = 1e-1
 C.linear_net = True
-C.learning_rate = 0.01
-C.L=8
+C.learning_rate = 1e-1
+C.L=10
 C.print_progress = True
 C.early_stopping = False
 C.length_corridors = [10]*1
 C.max_move = 5
-C.hidden_size = 25
-C.num_epochs = 100000
+C.hidden_size = 50
+C.num_epochs = 10
 C.algo_name = 'SGD'
 C.loss_fn = nn.CrossEntropyLoss()
 
@@ -35,17 +35,47 @@ plot_pca(data_dict, title="Original")
 
 
 model_dict_synthetic = make_synthetic_model_dict(data_dict)
+model_dict_synthetic = normalize_state_dict(model_dict_synthetic, 1)
 C.state_dict_path = 'model_state_dict.pth'
 torch.save(model_dict_synthetic, 'model_state_dict.pth')
 
 C.early_stopping = False
-C.num_epochs = 0
+C.num_epochs = 2
 data_dict_synthetic = run_sim_wrapper(C)
 plot_pca(data_dict_synthetic, title="Synthetic")
 
 C.num_epochs = 100000
-data_dict_converged = run_sim_wrapper(C)
-plot_pca(data_dict_converged, title="Converged")
+C.algo_name = 'SGD'
+C.learning_rate = 1e-4
+C.print_progress = True
+data_dict_converged_syn = run_sim_wrapper(C)
+plot_pca(data_dict_converged_syn, title="Converged synthetic")
+
+
+print("Computing Hessians")
+H = compute_hessian(data_dict_synthetic, normalize=None)
+print("Computing Eigenvalues")
+eigs, eigs_v = torch.linalg.eig(H)
+accuracy_map, r_2_map, norm_l, n_eigs_l = grid_search_pert_direction(data_dict_synthetic, eigs, eigs_v)
+
+filtered_map = r_2_map
+filtered_map[accuracy_map<0.99] = 1
+i_eigs, i_norm = np.unravel_index(np.argmin(filtered_map), filtered_map.shape)
+n_eigs = n_eigs_l[i_eigs]
+norm = norm_l[i_norm]
+new_weights = perturb_model_dict(data_dict_synthetic['final_weights'], torch.real(eigs_v[:, abs(eigs).argsort()[:n_eigs]].mean(axis=1)), norm=norm, normalize=10)
+torch.save(new_weights, 'model_state_dict.pth')
+C.state_dict_path = 'model_state_dict.pth'
+C.num_epochs = 2
+data_dict_perturbed = run_sim_wrapper(C)
+plot_pca(data_dict_perturbed, title="Perturbed synthetic")
+
+C.num_epochs = 100000
+C.algo_name = 'SGD'
+C.learning_rate = 1e-4
+C.print_progress = True
+data_dict_converged_syn_pert = run_sim_wrapper(C)
+plot_pca(data_dict_converged_syn_pert, title="Converged synthetic perturbed")
 
 # grad = compute_gradient(data_dict_synthetic, normalize=1)
 
@@ -67,31 +97,11 @@ print("Computing Hessians")
 H = compute_hessian(data_dict, normalize=None)
 print("Computing Eigenvalues")
 eigs, eigs_v = torch.linalg.eig(H)
-
-C.print_progress = False
-n_samples = 100
-accuracy_map = np.zeros((n_samples, n_samples))
-r_2_map = np.zeros((n_samples, n_samples))
-n_eigs_l = np.linspace(1, len(eigs), n_samples).astype(int)
-norm_l = np.linspace(1, 100, n_samples)
-for i, n_eigs in tqdm(enumerate(n_eigs_l)):
-    for j, norm in enumerate(norm_l):
-        new_weights = perturb_model_dict(data_dict['final_weights'], torch.real(eigs_v[:, abs(eigs).argsort()[:n_eigs]].mean(axis=1)), norm=norm, normalize=1)
-        torch.save(new_weights, 'model_state_dict.pth')
-
-        C.num_epochs = 0
-        C.state_dict_path = 'model_state_dict.pth'
-        data_dict_perturbed = run_sim_wrapper(C)
-        h_np = data_dict_perturbed['hidden_states'][-1].cpu().detach().numpy()
-        accuracy = (data_dict_perturbed['outputs'].argmax(1) == data_dict_perturbed['y'].argmax(1)).float().mean()
-        r_2 = get_r_2(PCA(n_components=2).fit_transform(h_np), data_dict_perturbed['loc_y'])
-        accuracy_map[i, j] = accuracy
-        r_2_map[i, j] = r_2
-        os.remove('model_state_dict.pth')
+accuracy_map, r_2_map, norm_l, n_eigs_l, eigs, eigs_v = grid_search_pert_direction(data_dict)
 
 map = r_2_map
 map[accuracy_map<0.99] = 1
-plt.imshow(map)
+plt.imshow(filtered_map)
 plt.colorbar()
 plt.xticks(np.arange(len(norm_l))[::len(norm_l)//10], norm_l[::len(norm_l)//10].astype(int), rotation=45)
 plt.yticks(np.arange(len(n_eigs_l))[::len(n_eigs_l)//10], n_eigs_l[::len(n_eigs_l)//10], rotation=45)
@@ -140,10 +150,11 @@ plot_solution_direction_loss_space(data_dict_l, labels_l)
 n_params = H.shape[0]
 new_weights = perturb_model_dict(data_dict['final_weights'], torch.randn(size=[n_params]), norm=1000, normalize=1)
 torch.save(new_weights, 'model_state_dict.pth')
+C.s
 data_dict_random = run_sim_wrapper(C)
 
-data_dict_l = [data_dict]
-labels_l = ['original']
+data_dict_l = [data_dict_synthetic, data_dict_converged]
+labels_l = ['synthetic', 'converged']
 plot_solution_direction_loss_space(data_dict_l, labels_l)
 
 H_random = compute_hessian(data_dict_random, normalize=10)

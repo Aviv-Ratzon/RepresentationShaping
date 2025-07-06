@@ -1,11 +1,61 @@
 from itertools import product
 from functools import reduce
+import os
 import numpy as np
+from sklearn.decomposition import PCA
 import torch
 import torch.nn.functional as F
 from scipy.sparse.linalg import svds
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
+from tqdm import tqdm
+from run_sim import run_sim_wrapper
+
+
+def state_dict_to_theta(model_dict):
+    """
+    Convert a state dictionary to a flattened parameter vector theta.
+    
+    Args:
+        model_dict: Dictionary containing model parameters
+        
+    Returns:
+        theta: Flattened parameter vector
+        shapes: List of original tensor shapes for reconstruction
+        sizes: List of tensor sizes for reconstruction
+    """
+    W_l = [W.clone().detach() for W in model_dict.values()]
+    shapes = [W.shape for W in W_l]
+    sizes = [W.numel() for W in W_l]
+    theta = torch.concatenate([W.reshape(-1) for W in model_dict.values()])
+    return theta, shapes, sizes
+
+
+def theta_to_state_dict(theta, model_dict, shapes=None, sizes=None):
+    """
+    Convert a flattened parameter vector theta back to a state dictionary.
+    
+    Args:
+        theta: Flattened parameter vector
+        model_dict: Original model dictionary (for keys and device)
+        shapes: List of tensor shapes (optional, computed if None)
+        sizes: List of tensor sizes (optional, computed if None)
+        
+    Returns:
+        new_model_dict: State dictionary with reconstructed parameters
+    """
+    if shapes is None or sizes is None:
+        W_l = [W.clone().detach() for W in model_dict.values()]
+        shapes = [W.shape for W in W_l]
+        sizes = [W.numel() for W in W_l]
+    
+    W_l_new = []
+    idx = 0
+    for shape, size in zip(shapes, sizes):
+        W_l_new.append(theta[idx:idx+size].reshape(shape))
+        idx += size
+    new_model_dict = {k: v for k, v in zip(model_dict.keys(), W_l_new)}
+    return new_model_dict
 
 
 def cosine_similarity(a, b):
@@ -24,8 +74,7 @@ def get_r_2(X, y):
     y_pred = model.predict(X)
     return r2_score(y, y_pred)
 
-def one_hot(x, num_classes):
-    return np.eye(num_classes)[x]
+
 
 def get_upper_triangle(matrix):
     """
@@ -240,8 +289,8 @@ def compute_hessian(data_dict, normalize=None):
 
     # Loss (mean squared error)
     if loss_fn == 'CE':
-        probs = F.softmax(out, dim=1)
-        loss = F.cross_entropy(probs, target)
+        # probs = F.softmax(out, dim=1)
+        loss = F.cross_entropy(out, target)
     elif loss_fn == 'MSE':
         loss = F.mse_loss(out, target)
     else:
@@ -306,37 +355,18 @@ def normalize_W_l(W_l, norm=100):
     return [W/factor for W in W_l]
 
 def normalize_state_dict(model_dict, norm=100):
-    device = next(iter(model_dict.values())).device
-    W_l = [W.clone().detach() for W in model_dict.values()]
-    shapes = [W.shape for W in W_l]
-    sizes = [W.numel() for W in W_l]
-    theta = torch.concatenate([W.reshape(-1) for W in model_dict.values()])
+    theta, shapes, sizes = state_dict_to_theta(model_dict)
     theta = theta * norm / torch.linalg.norm(theta)
-    W_l_new = []
-    idx = 0
-    for shape, size in zip(shapes, sizes):
-        W_l_new.append(theta[idx:idx+size].reshape(shape))
-        idx += size
-    new_model_dict = {k:v for k, v in zip(model_dict.keys(), W_l_new)}
-    return new_model_dict
+    return theta_to_state_dict(theta, model_dict, shapes, sizes)
 
 def perturb_model_dict(model_dict, direction, norm=1, normalize=None):
     device = next(iter(model_dict.values())).device
     direction = direction.to(device)
-    W_l = [W.clone().detach() for W in model_dict.values()]
-    shapes = [W.shape for W in W_l]
-    sizes = [W.numel() for W in W_l]
-    theta = torch.concatenate([W.reshape(-1) for W in model_dict.values()])
+    theta, shapes, sizes = state_dict_to_theta(model_dict)
     theta += direction * norm / torch.linalg.norm(direction).to(device)
     if normalize:
         theta = theta * normalize / torch.linalg.norm(theta)
-    W_l_new = []
-    idx = 0
-    for shape, size in zip(shapes, sizes):
-        W_l_new.append(theta[idx:idx+size].reshape(shape))
-        idx += size
-    new_model_dict = {k:v for k, v in zip(model_dict.keys(), W_l_new)}
-    return new_model_dict
+    return theta_to_state_dict(theta, model_dict, shapes, sizes)
 
 def get_loss(data_dict, normalize=None):
     x = data_dict['X']; target = data_dict['y']; final_weights = data_dict['final_weights']
@@ -507,7 +537,51 @@ def compute_gradient_np(data_dict, normalize=None):
 
 
 def get_state_dict_norm(model_dict):
-    device = next(iter(model_dict.values())).device
-    W_l = [W.clone().detach() for W in model_dict.values()]
-    theta = torch.concatenate([W.reshape(-1) for W in model_dict.values()])
+    theta, _, _ = state_dict_to_theta(model_dict)
     return torch.linalg.norm(theta)
+
+def grid_search_pert_direction(data_dict, eigs, eigs_v): 
+    C = data_dict['C']
+    X = data_dict['X']; y = data_dict['y']
+    loc_y = data_dict['loc_y']
+
+    C.print_progress = False
+    n_samples = 100
+    accuracy_map = np.zeros((n_samples, n_samples))
+    r_2_map = np.zeros((n_samples, n_samples))
+    n_eigs_l = np.linspace(1, len(eigs), n_samples).astype(int)
+    norm_l = np.linspace(1, 100, n_samples)
+    
+    # Pre-compute the sorted eigenvalues and eigenvectors to avoid repeated computation
+    sorted_indices = abs(eigs).argsort()
+    sorted_eigs_v = torch.real(eigs_v[:, sorted_indices])
+    
+    # Pre-compute all perturbation directions
+    perturbation_directions = []
+    for n_eigs in n_eigs_l:
+        direction = sorted_eigs_v[:, :n_eigs].mean(axis=1)
+        perturbation_directions.append(direction)
+    
+    for i, (n_eigs, pert_direction) in tqdm(enumerate(zip(n_eigs_l, perturbation_directions))):
+        for j, norm in enumerate(norm_l):
+            new_weights = perturb_model_dict(data_dict['final_weights'], pert_direction, norm=norm, normalize=1)
+            
+            W_hidden = get_effective_W_from_model_dict(new_weights, to_hidden=True)
+            hidden = X @ W_hidden
+            h_np = hidden.cpu().numpy()
+            W_output = get_effective_W_from_model_dict(new_weights, to_hidden=False)
+            out = X @ W_output
+            
+            accuracy = (out.argmax(1) == y.argmax(1)).float().mean().item()
+            r_2 = get_r_2(PCA(n_components=2).fit_transform(h_np), loc_y)
+            accuracy_map[i, j] = accuracy
+            r_2_map[i, j] = r_2
+    return accuracy_map, r_2_map, norm_l, n_eigs_l
+
+def get_effective_W_from_model_dict(model_dict, to_hidden=False):
+    W_l = [W.clone().detach() for W in model_dict.values()]
+    W_l = W_l[:-1] if to_hidden else W_l
+    W_effective = W_l[0].T
+    for W in W_l[1:]:
+        W_effective = W_effective @ W.T
+    return W_effective

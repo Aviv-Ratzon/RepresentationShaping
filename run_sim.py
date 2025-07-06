@@ -7,8 +7,12 @@ from scipy.ndimage import gaussian_filter
 from torch import nn, optim
 
 from model import DNN
-from utils import one_hot
 from tqdm import tqdm
+from utils import state_dict_to_theta, theta_to_state_dict
+
+
+def one_hot(x, num_classes):
+    return np.eye(num_classes)[x]
 
 
 use_gpu = True
@@ -231,17 +235,9 @@ def train_model(C: Config, X, y, model, action_taken):
         
         ############
         model_dict = model.state_dict()
-        W_l = [W.clone().detach() for W in model_dict.values()]
-        shapes = [W.shape for W in W_l]
-        sizes = [W.numel() for W in W_l]
-        theta = torch.concatenate([W.reshape(-1) for W in model_dict.values()])
+        theta, shapes, sizes = state_dict_to_theta(model_dict)
         theta = theta * 10 / torch.linalg.norm(theta)
-        W_l_new = []
-        idx = 0
-        for shape, size in zip(shapes, sizes):
-            W_l_new.append(theta[idx:idx+size].reshape(shape))
-            idx += size
-        new_model_dict = {k:v for k, v in zip(model_dict.keys(), W_l_new)}
+        new_model_dict = theta_to_state_dict(theta, model_dict, shapes, sizes)
         model.load_state_dict(new_model_dict)
         ############
 
@@ -274,7 +270,8 @@ def run_sim(C: Config):
     X = torch.tensor(X, dtype=torch.float32).to(device)
     y = torch.tensor(y, dtype=torch.float32).to(device)
 
-    C.G = ((C.sig_h_2*(X.shape[1]+C.hidden_size)/(2*X.shape[1]*X.var()))**(1/(2*C.L))).item()
+    if C.sig_h_2 is not None:
+        C.G = ((C.sig_h_2*(X.shape[1]+C.hidden_size)/(2*X.shape[1]*X.var()))**(1/(2*C.L))).item()
     # if C.sig_h_2 and C.print_progress:
     #     print(f'Changed G to {C.G} to get sig_h_2 = {C.sig_h_2}')
     # Create model
