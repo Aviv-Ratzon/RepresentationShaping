@@ -8,7 +8,7 @@ from torch import nn, optim
 
 from model import DNN
 from tqdm import tqdm
-from utils import state_dict_to_theta, theta_to_state_dict
+# from utils import state_dict_to_theta, theta_to_state_dict
 
 
 def one_hot(x, num_classes):
@@ -193,8 +193,8 @@ def create_data(C):
 def train_model(C: Config, X, y, model, action_taken):
     with torch.no_grad():
         outputs, hidden_states = model(X)
-        # if C.print_progress:
-        #     print(f'Sig_2 of last hidden: {hidden_states[-1].var().item()}')
+        if C.print_progress:
+            print(f'Sig_2 of last hidden: {hidden_states[-1].var().item()}')
 
     # Loss function and optimizer
     criterion = C.loss_fn
@@ -207,7 +207,9 @@ def train_model(C: Config, X, y, model, action_taken):
     loss_l = []
     accuracy_l = []
     hidden_l = []
+    state_dict_l = []
     sample_inds = np.unique(np.linspace(0, C.num_epochs-1, 10000).astype(int))
+    sample_inds_state_dict = np.unique(np.linspace(0, C.num_epochs-1, 100).astype(int))
     for epoch in tqdm(range(C.num_epochs)) if C.print_progress else range(C.num_epochs):
         if C.B == 1:
             X_batch = X
@@ -234,11 +236,11 @@ def train_model(C: Config, X, y, model, action_taken):
         #     print(f"Epoch {epoch + 1}/{C.num_epochs}, Loss: {loss_l[-1]:.4f}")
         
         ############
-        model_dict = model.state_dict()
-        theta, shapes, sizes = state_dict_to_theta(model_dict)
-        theta = theta * 10 / torch.linalg.norm(theta)
-        new_model_dict = theta_to_state_dict(theta, model_dict, shapes, sizes)
-        model.load_state_dict(new_model_dict)
+        # model_dict = model.state_dict()
+        # theta, shapes, sizes = state_dict_to_theta(model_dict)
+        # theta = theta * 10 / torch.linalg.norm(theta)
+        # new_model_dict = theta_to_state_dict(theta, model_dict, shapes, sizes)
+        # model.load_state_dict(new_model_dict)
         ############
 
         with torch.no_grad():
@@ -257,8 +259,11 @@ def train_model(C: Config, X, y, model, action_taken):
                         break
                 else:
                     accuracy_l.append(0)
+                
+        if epoch in sample_inds_state_dict:
+            state_dict_l.append(deepcopy(model.state_dict()))
         
-    return loss_l, accuracy_l, hidden_l
+    return loss_l, accuracy_l, hidden_l, state_dict_l
 
 
 def run_sim(C: Config):
@@ -272,27 +277,27 @@ def run_sim(C: Config):
 
     if C.sig_h_2 is not None:
         C.G = ((C.sig_h_2*(X.shape[1]+C.hidden_size)/(2*X.shape[1]*X.var()))**(1/(2*C.L))).item()
-    # if C.sig_h_2 and C.print_progress:
-    #     print(f'Changed G to {C.G} to get sig_h_2 = {C.sig_h_2}')
+    if C.sig_h_2 and C.print_progress:
+        print(f'Changed G to {C.G} to get sig_h_2 = {C.sig_h_2}')
     # Create model
     model = DNN(input_size + n_actions, C.hidden_size, output_size, C.L, C.fixed_output, C.linear_net, C.G, C.bias).to(device)
     if C.state_dict_path is not None:
         model.load_state_dict(torch.load(C.state_dict_path))
     initial_weights = deepcopy(model.state_dict())
 
-    loss_l, accuracy_l, hidden_l = train_model(C, X, y, model, action_taken)
+    loss_l, accuracy_l, hidden_l, state_dict_l = train_model(C, X, y, model, action_taken)
     # Testing
     with torch.no_grad():
         outputs, hidden_states = model(X)
     # print(criterion(outputs, y).item()/y_var)
 
 
-    return X, y, corridor, loc_X.squeeze(), loc_y.squeeze(), action_taken, hidden_states, loss_l, accuracy_l, outputs.cpu().numpy(), hidden_l, model.state_dict(), initial_weights
+    return X, y, corridor, loc_X.squeeze(), loc_y.squeeze(), action_taken, hidden_states, loss_l, accuracy_l, outputs.cpu().numpy(), hidden_l, model.state_dict(), initial_weights, state_dict_l
 
 
 
 def run_sim_wrapper(C):
-    X, y, corridor, loc_X, loc_y, action_taken, hidden_states, loss_l, accuracy_l, outputs, hidden_l, final_weights, initial_weights = run_sim(C)
+    X, y, corridor, loc_X, loc_y, action_taken, hidden_states, loss_l, accuracy_l, outputs, hidden_l, final_weights, initial_weights, state_dict_l = run_sim(C)
 
     data_dict = {
         'X': X,
@@ -308,7 +313,8 @@ def run_sim_wrapper(C):
         'hidden_l': hidden_l,
         'initial_weights': initial_weights,
         'final_weights': final_weights,
-        'C': C
+        'C': C,
+        'state_dict_l': state_dict_l
     }
 
     return data_dict

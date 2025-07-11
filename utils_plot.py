@@ -2,7 +2,7 @@ from matplotlib import pyplot as plt
 import torch
 from sklearn.decomposition import PCA
 import numpy as np
-from utils import calc_PR, compute_gradient, get_loss
+from utils import calc_PR, compute_gradient, get_loss, get_state_dict_norm
 
 
 def plot_loss_and_dist(data_dict):
@@ -69,17 +69,23 @@ def plot_pca(data_dict, title=""):
 
 
 def plot_solution_direction_loss_space(data_dict_l, labels_l):
-    norm_l = np.linspace(0.1, 50, 1000)
+    norm_l = np.linspace(0.01, 50, 1000)
     plt.figure(figsize=(20, 5))
     ax1 = plt.gca()
     ax2 = ax1.twinx()
     for data_dict, label in zip(data_dict_l, labels_l):
         ax1.plot(norm_l, [get_loss(data_dict, normalize=norm) for norm in norm_l], label=label)
         ax2.plot(norm_l, [torch.norm(compute_gradient(data_dict, normalize=norm)).item() for norm in norm_l], label=label, ls='--', alpha=0.7)
+        color = ax1.get_lines()[-1].get_color()  # get color of the last line plotted for this data_dict
+        ax1.axvline(get_state_dict_norm(data_dict['initial_weights']), ls=':', alpha=0.7, color=color)
+        ax1.axvline(get_state_dict_norm(data_dict['final_weights']), ls=':', alpha=1, color=color)
     ax1.set_yscale('log')
     ax2.set_yscale('log')
     ax1.set_xlabel('Normalization Factor')
     ax1.set_ylabel('Loss')
     ax2.set_ylabel('Gradient Norm')
+    # Set xticks every 2.5
+    xticks = np.arange(0, 50.1, 2.5)
+    ax1.set_xticks(xticks)
     plt.legend()
     plt.show()

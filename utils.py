@@ -489,7 +489,7 @@ def factorize_matrix_to_L_matrices(W, L, N=None):
             print(f"Step {step}, Loss: {loss.item():.6f}")
     return matrices
 
-def compute_gradient_np(data_dict, normalize=None):
+def compute_gradient_np(data_dict, normalize=None, flatten_grads=True):
     def softmax(z):
         z = z - np.max(z)  # For numerical stability
         exp_z = np.exp(z)
@@ -523,34 +523,85 @@ def compute_gradient_np(data_dict, normalize=None):
                 delta = weights[i].T @ delta
 
         # Flatten and concatenate all gradients into one vector
-        flat_grads = np.concatenate([g.flatten() for g in grads])
-        return flat_grads
+        return grads
 
     W_l = [W.detach().cpu().numpy() for W in data_dict['final_weights'].values()]
     if normalize:
         W_l = normalize_W_l(W_l, normalize)
     X_np = data_dict['X'].cpu().numpy()
     y_np = data_dict['y'].cpu().numpy()
-    grad = [compute_gradients(x, y, W_l) for x,y in zip(X_np, y_np)]
-    grad = np.array(grad).mean(0)
-    return grad
+    grads_l = [compute_gradients(x, y, W_l) for x,y in zip(X_np, y_np)]
+    flat_grads = [np.concatenate([g.flatten() for g in grads]) for grads in grads_l]
+    if flatten_grads:
+        return flat_grads
+    else:
+        return grads_l
+
+def get_delta_and_h(data_dict, normalize=None):
+    delta_l_samples = [[] for _ in range(data_dict['C'].L+1)]
+    h_l_samples = [[] for _ in range(data_dict['C'].L+1)]
+    def softmax(z):
+        z = z - np.max(z)  # For numerical stability
+        exp_z = np.exp(z)
+        return exp_z / np.sum(exp_z)
+
+    def cross_entropy_grad(logits, y_true, num_classes):
+        return softmax(logits) - y_true
+
+    def forward_pass(x, weights):
+        activations = [x]
+        for W in weights:
+            x = W @ x
+            activations.append(x)
+        return activations
+
+    def compute_gradients(x, y, weights):
+        L = len(weights)
+        num_classes = weights[-1].shape[0]
+
+        # Forward pass
+        activations = forward_pass(x, weights)
+
+        # Backward pass
+        delta = cross_entropy_grad(activations[-1], y, num_classes)
+
+        for i in reversed(range(L)):
+            a_prev = activations[i].reshape(-1, 1)
+            delta_l_samples[i].append(delta)
+            h_l_samples[i].append(a_prev)
+            if i > 0:
+                delta = weights[i].T @ delta
+
+    W_l = [W.detach().cpu().numpy() for W in data_dict['final_weights'].values()]
+    if normalize:
+        W_l = normalize_W_l(W_l, normalize)
+    X_np = data_dict['X'].cpu().numpy()
+    y_np = data_dict['y'].cpu().numpy()
+    for x,y in zip(X_np, y_np):
+        compute_gradients(x, y, W_l)
+    return delta_l_samples, h_l_samples
 
 
 def get_state_dict_norm(model_dict):
     theta, _, _ = state_dict_to_theta(model_dict)
     return torch.linalg.norm(theta)
 
-def grid_search_pert_direction(data_dict, eigs, eigs_v): 
+def grid_search_pert_direction(data_dict, eigs, eigs_v, norm_range=(1, 100), n_eigs_range=None, pert_from_norm=None): 
     C = data_dict['C']
     X = data_dict['X']; y = data_dict['y']
     loc_y = data_dict['loc_y']
+    state_dict = data_dict['final_weights']
+    if pert_from_norm:
+        state_dict = normalize_state_dict(state_dict, pert_from_norm)
+    if n_eigs_range is None:
+        n_eigs_range = (1, len(eigs))
 
     C.print_progress = False
     n_samples = 100
     accuracy_map = np.zeros((n_samples, n_samples))
     r_2_map = np.zeros((n_samples, n_samples))
-    n_eigs_l = np.linspace(1, len(eigs), n_samples).astype(int)
-    norm_l = np.linspace(1, 100, n_samples)
+    n_eigs_l = np.linspace(n_eigs_range[0], n_eigs_range[1], n_samples).astype(int)
+    norm_l = np.linspace(norm_range[0], norm_range[1], n_samples)
     
     # Pre-compute the sorted eigenvalues and eigenvectors to avoid repeated computation
     sorted_indices = abs(eigs).argsort()
@@ -564,7 +615,7 @@ def grid_search_pert_direction(data_dict, eigs, eigs_v):
     
     for i, (n_eigs, pert_direction) in tqdm(enumerate(zip(n_eigs_l, perturbation_directions))):
         for j, norm in enumerate(norm_l):
-            new_weights = perturb_model_dict(data_dict['final_weights'], pert_direction, norm=norm, normalize=1)
+            new_weights = perturb_model_dict(state_dict, pert_direction, norm=norm, normalize=1)
             
             W_hidden = get_effective_W_from_model_dict(new_weights, to_hidden=True)
             hidden = X @ W_hidden
@@ -578,8 +629,10 @@ def grid_search_pert_direction(data_dict, eigs, eigs_v):
             r_2_map[i, j] = r_2
     return accuracy_map, r_2_map, norm_l, n_eigs_l
 
-def get_effective_W_from_model_dict(model_dict, to_hidden=False):
+def get_effective_W_from_model_dict(model_dict, to_hidden=False, normalize=None):
     W_l = [W.clone().detach() for W in model_dict.values()]
+    if normalize:
+        W_l = normalize_W_l(W_l, normalize)
     W_l = W_l[:-1] if to_hidden else W_l
     W_effective = W_l[0].T
     for W in W_l[1:]:
