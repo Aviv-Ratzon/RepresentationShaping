@@ -8,8 +8,55 @@ from torch import nn, optim
 
 from model import DNN
 from tqdm import tqdm
+
 # from utils import state_dict_to_theta, theta_to_state_dict
 
+
+
+def state_dict_to_theta(model_dict):
+    """
+    Convert a state dictionary to a flattened parameter vector theta.
+    
+    Args:
+        model_dict: Dictionary containing model parameters
+        
+    Returns:
+        theta: Flattened parameter vector
+        shapes: List of original tensor shapes for reconstruction
+        sizes: List of tensor sizes for reconstruction
+    """
+    W_l = [W.clone().detach() for W in model_dict.values()]
+    shapes = [W.shape for W in W_l]
+    sizes = [W.numel() for W in W_l]
+    theta = torch.concatenate([W.reshape(-1) for W in model_dict.values()])
+    return theta, shapes, sizes
+
+
+def theta_to_state_dict(theta, model_dict, shapes=None, sizes=None):
+    """
+    Convert a flattened parameter vector theta back to a state dictionary.
+    
+    Args:
+        theta: Flattened parameter vector
+        model_dict: Original model dictionary (for keys and device)
+        shapes: List of tensor shapes (optional, computed if None)
+        sizes: List of tensor sizes (optional, computed if None)
+        
+    Returns:
+        new_model_dict: State dictionary with reconstructed parameters
+    """
+    if shapes is None or sizes is None:
+        W_l = [W.clone().detach() for W in model_dict.values()]
+        shapes = [W.shape for W in W_l]
+        sizes = [W.numel() for W in W_l]
+    
+    W_l_new = []
+    idx = 0
+    for shape, size in zip(shapes, sizes):
+        W_l_new.append(theta[idx:idx+size].reshape(shape))
+        idx += size
+    new_model_dict = {k: v for k, v in zip(model_dict.keys(), W_l_new)}
+    return new_model_dict
 
 def one_hot(x, num_classes):
     return np.eye(num_classes)[x]
@@ -60,6 +107,7 @@ class Config:
         self.isotropic_noise = 0
         self.bias_batch = None
         self.state_dict_path = None
+        self.normalize_theta = False
 
 class action_handler:
     def __init__(self, C):
@@ -235,13 +283,13 @@ def train_model(C: Config, X, y, model, action_taken):
         # if (epoch + 1) % int(C.num_epochs/10) == 0 and C.print_progress:
         #     print(f"Epoch {epoch + 1}/{C.num_epochs}, Loss: {loss_l[-1]:.4f}")
         
-        ############
-        # model_dict = model.state_dict()
-        # theta, shapes, sizes = state_dict_to_theta(model_dict)
-        # theta = theta * 10 / torch.linalg.norm(theta)
-        # new_model_dict = theta_to_state_dict(theta, model_dict, shapes, sizes)
-        # model.load_state_dict(new_model_dict)
-        ############
+        if C.normalize_theta:
+            model_dict = model.state_dict()
+            theta = torch.concatenate([W.reshape(-1) for W in model_dict.values()])
+            theta_norm = torch.linalg.norm(theta)
+            new_model_dict = {k:v*int(C.normalize_theta)/theta_norm for k, v in model_dict.items()}
+            model.load_state_dict(new_model_dict)
+        
 
         with torch.no_grad():
             if epoch in sample_inds[::10]:

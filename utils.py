@@ -69,6 +69,12 @@ def cosine_similarity(a, b):
 def vector_angle(a, b):
     return np.rad2deg(np.arccos(cosine_similarity(a, b)))
 
+def get_order(data_dict):
+    h_np = data_dict['hidden_states'][-1].cpu().numpy()
+    loc_y = data_dict['loc_y']
+    order = get_r_2(PCA(n_components=1).fit_transform(h_np), loc_y)
+    return order
+
 def get_r_2(X, y):
     model = LinearRegression().fit(X, y)
     y_pred = model.predict(X)
@@ -189,6 +195,11 @@ def calc_NC1(h, y):
 
     nc1 = trace_Sw / trace_Sb if trace_Sb != 0 else np.inf
     return nc1
+
+def calc_NC1_from_data_dict(data_dict):
+    h_np = data_dict['hidden_states'][-1].cpu().numpy()
+    loc_y = data_dict['loc_y']
+    return calc_NC1(h_np, loc_y)
 
 def calc_PR(h):
     cov = compute_covariance(h)

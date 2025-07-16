@@ -11,27 +11,115 @@ from run_sim import Config, run_sim_wrapper
 from utils import *
 from utils_plot import *
 import os
+from copy import deepcopy
+
+
+
+def multiclass_functional_margin(W, x, y):
+    W = W / np.linalg.norm(W)
+    scores = x@W  # shape (K,)
+    true_score = scores[y]
+    max_other_score = np.max(np.delete(scores, y))
+    return true_score - max_other_score
 
 C = Config()
-
-C.sig_h_2 = 1e-5
+C.sig_h_2 = 1e-3
 C.linear_net = True
 C.learning_rate = 1e-2
-C.L=8
+C.L=5
 C.print_progress = True
 C.early_stopping = False
-C.length_corridors = [30]*1
-C.max_move = 1
-C.hidden_size = 61
-C.num_epochs = 1000000
+C.length_corridors = [8]*1
+C.hidden_size = C.length_corridors[0] * 2 + 1
+C.num_epochs = int(100000)
 C.algo_name = 'SGD'
-C.loss_fn = nn.CrossEntropyLoss()
+C.normalize_theta = 10
+C.max_move = C.length_corridors[0]//2
+
+var_name = 'max_move'
+var_values = np.linspace(1,  C.length_corridors[0], 10).astype(int)
+fig, axs = plt.subplots(1, 4, figsize=(6*4, 3))
+fig_pca, axs_pca = plt.subplots(len(var_values), 4, figsize=(3*4, 2*len(var_values)))
+data_dict_l = []
+for var_value, ax_pca in zip(var_values, axs_pca):
+    C = deepcopy(C)
+    setattr(C, var_name, var_value)
+    data_dict = run_sim_wrapper(C)
+    data_dict_l.append(data_dict)
+    # plot_pca(data_dict, title="Original")
+
+    from copy import deepcopy
+    cos_sim_l = []
+    order_l = []
+    nc1_l = []
+    margins_l = []
+    for state_dict in tqdm(data_dict['state_dict_l']):
+        data_dict_new = deepcopy(data_dict)
+        data_dict_new['final_weights'] = state_dict
+        W_hidden = get_effective_W_from_model_dict(state_dict, to_hidden=True)
+        data_dict_new['hidden_states'] = [data_dict['X'] @ W_hidden]
+        theta, _, _ = state_dict_to_theta(state_dict)
+        grad = np.mean(compute_gradient_np(data_dict_new, normalize=None, flatten_grads=True),0)
+        cos_sim_l.append(cosine_similarity(-grad, theta.cpu().numpy()))
+        order_l.append(get_order(data_dict_new))
+        nc1_l.append(calc_NC1_from_data_dict(data_dict_new))
+        W = get_effective_W_from_model_dict(state_dict).cpu().numpy()
+        X = data_dict_new['X'].cpu().numpy()
+        y = data_dict_new['y'].cpu().numpy().argmax(1)
+        margins_l.append(np.mean([multiclass_functional_margin(W, x_curr, y_curr) for x_curr, y_curr in zip(X, y)]))
+    axs[0].plot(cos_sim_l, label=f'{var_name}={var_value}')
+    axs[1].plot(order_l, label=f'{var_name}={var_value}')
+    axs[2].plot(nc1_l, label=f'{var_name}={var_value}')
+    axs[3].plot(margins_l, label=f'{var_name}={var_value}')
+    plot_pca(data_dict, title=f'{var_name}={var_value}', axs=ax_pca)
+axs[0].set_title('Cosine Similarity of gradient and theta')
+axs[1].set_title('Order')
+axs[2].set_title('NC1')
+axs[3].set_title('Margins')
+[ax.set_ylim(-0.2, 1.1) for ax in axs[:-2]]
+axs[2].set_yscale('log')
+axs[1].legend()
+plt.show()
 
 
-data_dict = run_sim_wrapper(C)
-plot_pca(data_dict, title="Original")
+n_dicts = len(data_dict_l)
+cos_sim_l = []
+order_l = []
+nc1_l = []
+margins_l = []
+margins_synthetic_l = []
+for data_dict in data_dict_l:
+    state_dict = data_dict['final_weights']
+    W_hidden = get_effective_W_from_model_dict(state_dict, to_hidden=True)
+    theta, _, _ = state_dict_to_theta(state_dict)
+    grad = np.mean(compute_gradient_np(data_dict, normalize=None, flatten_grads=True),0)
+    cos_sim_l.append(cosine_similarity(-grad, theta.cpu().numpy()))
+    order_l.append(get_order(data_dict))
+    nc1_l.append(calc_NC1_from_data_dict(data_dict))
+    W = get_effective_W_from_model_dict(state_dict).cpu().numpy()
+    X = data_dict['X'].cpu().numpy()
+    y = data_dict['y'].cpu().numpy().argmax(1)
+    margins_l.append(np.mean([multiclass_functional_margin(W, x_curr, y_curr) for x_curr, y_curr in zip(X, y)]))
+    model_dict_synthetic = make_synthetic_model_dict(data_dict)
+    W = get_effective_W_from_model_dict(model_dict_synthetic).cpu().numpy()
+    margins_synthetic_l.append(np.mean([multiclass_functional_margin(W, x_curr, y_curr) for x_curr, y_curr in zip(X, y)]))
+fig, axs = plt.subplots(1, 4, figsize=(6*4, 3))
+axs[0].plot(var_values, cos_sim_l, marker='o')
+axs[0].set_title('Cosine Similarity of gradient and theta')
+axs[1].plot(var_values, order_l, marker='o')
+axs[1].set_title('Order')   
+axs[2].plot(var_values, nc1_l, marker='o')
+axs[2].set_title('NC1'); axs[2].set_yscale('log')
+axs[3].plot(var_values, margins_l, marker='o', label='original')
+axs[3].plot(var_values, margins_synthetic_l, marker='o', label='synthetic')
+axs[3].set_title('Margins')
+axs[3].legend()
+plt.show()
 
+labels_l = [str(A) for A in var_values]
+plot_solution_direction_loss_space(data_dict_l, labels_l)
 
+stop
 # model_dict_synthetic = make_synthetic_model_dict(data_dict)
 # model_dict_synthetic = normalize_state_dict(model_dict_synthetic, 1)
 # C.state_dict_path = 'model_state_dict.pth'
@@ -121,7 +209,7 @@ data_dict_perturbed = run_sim_wrapper(C)
 print(f"Accuracy of perturbed: {(data_dict_perturbed['outputs'].argmax(1) == data_dict_perturbed['y'].argmax(1)).float().mean()}")
 plot_pca(data_dict_perturbed)
 
-C.num_epochs = 10000
+C.num_epochs = 100000
 C.print_progress = True
 data_dict_converged = run_sim_wrapper(C)
 plot_pca(data_dict_converged)
@@ -151,6 +239,10 @@ plot_pca(data_dict_converged)
 # C.s
 # data_dict_random = run_sim_wrapper(C)
 
+data_dict_l = [data_dict]
+labels_l = ['original']
+labels_l = [str(A) for A in max_move_l]
+plot_solution_direction_loss_space(data_dict_l, labels_l)
 
 data_dict_l = [data_dict, data_dict_perturbed, data_dict_converged]
 labels_l = ['original', 'perturbed', 'converged']

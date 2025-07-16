@@ -29,7 +29,7 @@ def plot_loss_and_dist(data_dict):
     plt.show()
 
 
-def plot_pca(data_dict, title=""):
+def plot_pca(data_dict, title="", axs=None):
     loc_y = data_dict['loc_y'];
     hidden_states = data_dict['hidden_states'];
     action_taken = data_dict['action_taken']
@@ -40,8 +40,9 @@ def plot_pca(data_dict, title=""):
 
     pca = PCA().fit(h_np)
     X_reduced = pca.transform(h_np)
-    fig, axs = plt.subplots(1, 4, figsize=(20/2, 5/2))
-    fig.suptitle(title)
+    if axs is None:
+        fig, axs = plt.subplots(1, 4, figsize=(20/2, 5/2))
+        axs[0].set_ylabel(title)
     # Add cumulative explained variance ratio in the first row
     ax1 = axs[0]
     ax1.plot(np.cumsum(pca.explained_variance_ratio_), marker='o')
@@ -61,11 +62,12 @@ def plot_pca(data_dict, title=""):
 
     axs[3].plot(loss_l)
     axs[3].set_yscale('log')
-    axs[3].twinx().plot(accuracy_l, 'r')
+    ax2 = axs[3].twinx()
+    ax2.plot(accuracy_l, 'r')
+    ax2.set_ylim(-0.1, 1.1)
     axs[3].set_title("Loss")
 
     plt.tight_layout()
-    plt.show()
 
 
 def plot_solution_direction_loss_space(data_dict_l, labels_l):
@@ -89,3 +91,4 @@ def plot_solution_direction_loss_space(data_dict_l, labels_l):
     ax1.set_xticks(xticks)
     plt.legend()
     plt.show()
+
