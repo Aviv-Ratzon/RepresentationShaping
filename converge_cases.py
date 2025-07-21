@@ -37,7 +37,7 @@ C.normalize_theta = 10
 C.max_move = C.length_corridors[0]//2
 
 var_name = 'max_move'
-var_values = np.linspace(1,  C.length_corridors[0], 10).astype(int)
+var_values = np.linspace(1,  C.length_corridors[0], 1).astype(int)
 fig, axs = plt.subplots(1, 4, figsize=(6*4, 3))
 fig_pca, axs_pca = plt.subplots(len(var_values), 4, figsize=(3*4, 2*len(var_values)))
 data_dict_l = []
