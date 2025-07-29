@@ -437,7 +437,7 @@ def make_synthetic_model_dict(data_dict):
     return model_dict
 
 
-def factorize_matrix_to_L_matrices(W, L, N=None):
+def factorize_matrix_to_L_matrices(W, L, N=None, n_steps=20000, lr=0.00001, verbose=False):
     """
     Factorize a matrix W into L matrices with intermediate dimension N.
     
@@ -480,9 +480,10 @@ def factorize_matrix_to_L_matrices(W, L, N=None):
             w *= scale_factor
     
     # Optimize to find the factorization
-    optimizer = torch.optim.Adam(matrices, lr=0.00001)
-    n_steps = 20000
-    for step in range(n_steps):
+    optimizer = torch.optim.Adam(matrices, lr=lr)
+    loss_l = []
+    loop_wrapper = tqdm(range(n_steps)) if verbose else range(n_steps)
+    for step in loop_wrapper:
         optimizer.zero_grad()
         
         # Compute the product of all matrices
@@ -492,12 +493,18 @@ def factorize_matrix_to_L_matrices(W, L, N=None):
 
         # Compute loss (MSE between product and target W)
         loss = torch.nn.functional.mse_loss(product, W)
-        
+        loss_l.append(loss.item())
         loss.backward()
         optimizer.step()
-        
-        if step % (n_steps//10) == 0:
-            print(f"Step {step}, Loss: {loss.item():.6f}")
+    
+    if verbose:
+        plt.figure(figsize=(10, 5))
+        plt.plot(loss_l)
+        plt.yscale('log')
+        plt.xlabel('Step')
+        plt.ylabel('Loss')
+        plt.title('Loss over time during factorization')
+        plt.show()
     return matrices
 
 def compute_gradient_np(data_dict, normalize=None, flatten_grads=True):
@@ -649,3 +656,17 @@ def get_effective_W_from_model_dict(model_dict, to_hidden=False, normalize=None)
     for W in W_l[1:]:
         W_effective = W_effective @ W.T
     return W_effective
+
+def multiclass_functional_margin(W, X, y, reducer=np.min):
+    W = W / np.linalg.norm(W)
+    margins = []
+    i_max_other_score_l = []
+    for x, y_curr in zip(X, y):
+        label = y_curr.argmax()
+        scores = x@W  # shape (K,)
+        true_score = scores[label]
+        max_other_score = np.max(np.delete(scores, label))
+        i_max_other_score = np.argmax(np.delete(scores, label))
+        margins.append(true_score - max_other_score)
+        i_max_other_score_l.append(i_max_other_score)
+    return reducer(margins), np.argmin(margins), i_max_other_score_l[np.argmin(margins)]

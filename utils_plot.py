@@ -70,8 +70,8 @@ def plot_pca(data_dict, title="", axs=None):
     plt.tight_layout()
 
 
-def plot_solution_direction_loss_space(data_dict_l, labels_l):
-    norm_l = np.linspace(0.01, 50, 1000)
+def plot_solution_direction_loss_space(data_dict_l, labels_l, max_norm=50):
+    norm_l = np.linspace(0.01, max_norm, 1000)
     plt.figure(figsize=(20, 5))
     ax1 = plt.gca()
     ax2 = ax1.twinx()
@@ -87,7 +87,7 @@ def plot_solution_direction_loss_space(data_dict_l, labels_l):
     ax1.set_ylabel('Loss')
     ax2.set_ylabel('Gradient Norm')
     # Set xticks every 2.5
-    xticks = np.arange(0, 50.1, 2.5)
+    xticks = np.linspace(0, max_norm, 20)
     ax1.set_xticks(xticks)
     plt.legend()
     plt.show()

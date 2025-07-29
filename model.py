@@ -9,9 +9,12 @@ class DNN(nn.Module):
         self.bias = bias
 
         # Define layers
-        self.input_layer = nn.Linear(input_size, hidden_size, bias=bias)
-        self.hidden_layers = nn.ModuleList([nn.Linear(hidden_size, hidden_size, bias=bias) for _ in range(num_layers - 1)])
-        self.output_layer = nn.Linear(hidden_size, output_size, bias=bias)
+        if num_layers == 0:
+            self.output_layer = nn.Linear(input_size, output_size, bias=bias)
+        else:
+            self.input_layer = nn.Linear(input_size, hidden_size, bias=bias)
+            self.hidden_layers = nn.ModuleList([nn.Linear(hidden_size, hidden_size, bias=bias) for _ in range(num_layers - 1)])
+            self.output_layer = nn.Linear(hidden_size, output_size, bias=bias)
         if fixed_output:
             self.output_layer.requires_grad_(False)
 
@@ -24,26 +27,21 @@ class DNN(nn.Module):
         self.init_weights(fixed_output, G)
 
     def init_weights(self, fixed_output, G):
-        nn.init.xavier_normal_(self.input_layer.weight, gain=G)
-        # nn.init.constant_(self.input_layer.weight, 1)
-        # nn.init.constant_(self.input_layer.bias, 0.0)
-        for layer in self.hidden_layers:
-            nn.init.xavier_normal_(layer.weight, gain=G)
-            # nn.init.constant_(layer.bias, 0.0)
-        if fixed_output:
-            nn.init.normal_(self.output_layer.weight)
-            # self.output_layer.weight.data = torch.eye(self.output_layer.weight.size(0),
-            #                                           self.output_layer.weight.size(1))
-        else:
+        if self.num_layers == 0:
             nn.init.xavier_normal_(self.output_layer.weight, gain=G)
-            # nn.init.constant_(self.output_layer.bias, 0.0)
-        # if self.bias:
-        #     for layer in self.hidden_layers:
-        #         nn.init.constant_(layer.bias, 0.0)
-        #     nn.init.constant_(self.input_layer.bias, 0.0)
-        #     nn.init.constant_(self.output_layer.bias, 0.0)
-
+        else:
+            nn.init.xavier_normal_(self.input_layer.weight, gain=G)
+            
+            for layer in self.hidden_layers:
+                nn.init.xavier_normal_(layer.weight, gain=G)
+            if fixed_output:
+                nn.init.normal_(self.output_layer.weight)
+            else:
+                nn.init.xavier_normal_(self.output_layer.weight, gain=G)
+            
     def forward(self, x):
+        if self.num_layers == 0:
+            return self.output_layer(x), [x]
         hidden_states = []
 
         # Input layer
