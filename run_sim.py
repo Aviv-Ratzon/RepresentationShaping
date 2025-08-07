@@ -108,6 +108,9 @@ class Config:
         self.bias_batch = None
         self.state_dict_path = None
         self.normalize_theta = False
+        
+        # Numerical precision settings
+        self.use_high_precision = True  # Use float64 instead of float32
 
 class action_handler:
     def __init__(self, C):
@@ -250,6 +253,13 @@ def train_model(C: Config, X, y, model, action_taken):
     optimizer = algo(model.parameters(), lr=C.learning_rate, weight_decay=C.lambda_reg)
     loss_thresh = 0.05 if not C.one_hot_inputs else 0.01
 
+    # Enable higher precision training if configured
+    if C.use_high_precision:
+        model = model.double()  # Convert to float64 for higher precision
+        X = X.double()
+        y = y.double()
+    
+    
     y_var = y.var().cpu().item() if isinstance(criterion, nn.MSELoss) else 1
     # Training loop
     loss_l = []
@@ -310,7 +320,8 @@ def train_model(C: Config, X, y, model, action_taken):
                 
         if epoch in sample_inds_state_dict:
             state_dict_l.append(deepcopy(model.state_dict()))
-        
+    
+    model.float()
     return loss_l, accuracy_l, hidden_l, state_dict_l
 
 
@@ -323,7 +334,7 @@ def run_sim(C: Config):
     X = torch.tensor(X, dtype=torch.float32).to(device)
     y = torch.tensor(y, dtype=torch.float32).to(device)
 
-    if C.sig_h_2 is not None:
+    if C.sig_h_2 is not None and C.L > 0:
         C.G = ((C.sig_h_2*(X.shape[1]+C.hidden_size)/(2*X.shape[1]*X.var()))**(1/(2*C.L))).item()
     if C.sig_h_2 and C.print_progress:
         print(f'Changed G to {C.G} to get sig_h_2 = {C.sig_h_2}')

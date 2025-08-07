@@ -38,6 +38,22 @@ class DNN(nn.Module):
                 nn.init.normal_(self.output_layer.weight)
             else:
                 nn.init.xavier_normal_(self.output_layer.weight, gain=G)
+        # sigma = G ** (-1 / self.num_layers + 1)
+        # fan_in = self.input_layer.weight.size(1)
+        # scale = sigma / fan_in**0.5
+        # nn.init.normal_(self.input_layer.weight, mean=0.0, std=scale)
+        # if self.num_layers == 0:
+        #     return
+        # for layer in self.hidden_layers:
+        #     fan_in = layer.weight.size(1)  # same as d_{i-1}
+        #     scale = sigma / fan_in**0.5
+        #     nn.init.normal_(layer.weight, mean=0.0, std=scale)
+        # if fixed_output:
+        #     nn.init.normal_(self.output_layer.weight)
+        # else:
+        #     fan_in = self.output_layer.weight.size(1)  # same as d_{i-1}
+        #     scale = G * sigma / fan_in**0.5
+        #     nn.init.normal_(self.output_layer.weight, mean=0.0, std=scale)
             
     def forward(self, x):
         if self.num_layers == 0:

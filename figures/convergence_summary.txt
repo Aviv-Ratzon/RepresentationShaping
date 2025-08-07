@@ -1,0 +1,111 @@
+Convergence Analysis Summary
+==================================================
+
+Training Run: L=0_L=1
+Final Loss: 0.024124
+Loss Range: 1.731906
+Convergence Status: likely_converged
+Convergence Epoch: N/A
+Slope: -2.84e-05
+R²: 0.482
+Recent Loss Change: 4.77e-03
+------------------------------
+Training Run: L=0_L=2
+Final Loss: 0.070784
+Loss Range: 1.737669
+Convergence Status: likely_converged
+Convergence Epoch: N/A
+Slope: -4.67e-05
+R²: 0.643
+Recent Loss Change: 4.78e-03
+------------------------------
+Training Run: L=0_L=3
+Final Loss: 0.115796
+Loss Range: 1.597011
+Convergence Status: likely_converged
+Convergence Epoch: N/A
+Slope: -5.30e-05
+R²: 0.703
+Recent Loss Change: 4.39e-03
+------------------------------
+Training Run: L=0_L=4
+Final Loss: 0.145826
+Loss Range: 1.552514
+Convergence Status: likely_converged
+Convergence Epoch: N/A
+Slope: -5.49e-05
+R²: 0.721
+Recent Loss Change: 4.22e-03
+------------------------------
+Training Run: L=1_L=1
+Final Loss: 0.000116
+Loss Range: 1.634799
+Convergence Status: still_training
+Convergence Epoch: N/A
+Slope: -9.53e-07
+R²: 0.046
+Recent Loss Change: 6.58e-03
+------------------------------
+Training Run: L=1_L=2
+Final Loss: 0.000200
+Loss Range: 1.876019
+Convergence Status: still_training
+Convergence Epoch: N/A
+Slope: -2.03e-06
+R²: 0.051
+Recent Loss Change: 6.85e-03
+------------------------------
+Training Run: L=1_L=3
+Final Loss: 0.000267
+Loss Range: 1.856729
+Convergence Status: still_training
+Convergence Epoch: N/A
+Slope: -3.05e-06
+R²: 0.057
+Recent Loss Change: 6.88e-03
+------------------------------
+Training Run: L=1_L=4
+Final Loss: 0.000317
+Loss Range: 1.757924
+Convergence Status: still_training
+Convergence Epoch: N/A
+Slope: -3.41e-06
+R²: 0.066
+Recent Loss Change: 6.68e-03
+------------------------------
+Training Run: L=8_L=1
+Final Loss: 0.000001
+Loss Range: 1.636583
+Convergence Status: converged
+Convergence Epoch: 2065
+Slope: -9.58e-09
+R²: 0.001
+Recent Loss Change: 0.00e+00
+------------------------------
+Training Run: L=8_L=2
+Final Loss: 0.000001
+Loss Range: 1.673477
+Convergence Status: converged
+Convergence Epoch: 2973
+Slope: -1.07e-08
+R²: 0.002
+Recent Loss Change: 1.45e-02
+------------------------------
+Training Run: L=8_L=3
+Final Loss: 0.000001
+Loss Range: 1.620585
+Convergence Status: converged
+Convergence Epoch: 3878
+Slope: -1.10e-08
+R²: 0.002
+Recent Loss Change: 5.65e-03
+------------------------------
+Training Run: L=8_L=4
+Final Loss: 0.000001
+Loss Range: 1.680586
+Convergence Status: converged
+Convergence Epoch: 3226
+Slope: -1.40e-08
+R²: 0.002
+Recent Loss Change: 1.08e-02
+------------------------------
