@@ -6,6 +6,7 @@ import torch.optim as optim
 import matplotlib.pyplot as plt
 import numpy as np
 import time
+import multiprocessing as mp
 
 start_time = time.time()
 
@@ -33,26 +34,20 @@ class DeepLinearNet(nn.Module):
             x = layer(x)
         return x
 
-depths = np.arange(1, 10)
-n_epochs = 10000000
-lr = 0.1
-results = {}
-plt.figure(figsize=(10, 6))
-
-for depth in depths:
-    lr *= 0.5
+def run_depth(depth, n_epochs, lr_init, X_tensor, y_tensor, X, y):
+    # Each process gets its own lr, model, etc.
+    lr = lr_init * (0.5 ** (depth-1))
     model = DeepLinearNet(depth).double()
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=lr)
     loss_l = []
-    for epoch in tqdm(range(n_epochs), desc=f"Depth {depth}", leave=False):
+    for epoch in tqdm(range(n_epochs), desc=f"Depth {depth}", leave=False, disable=True):
         optimizer.zero_grad()
         outputs = model(X_tensor)
         loss = criterion(outputs, y_tensor)
         loss.backward()
         optimizer.step()
         loss_l.append(loss.item())
-    plt.plot(loss_l, label=f"Depth {depth}")
     # Final predictions and metrics
     with torch.no_grad():
         outputs = model(X_tensor)
@@ -70,69 +65,88 @@ for depth in depths:
     scores_margin[np.arange(3), y] = -100
     margin = (true_scores[:, None] - scores_margin).min(1).min()
     pr = calc_PR(W)
-    results[depth] = {
+    result = {
         "final_loss": final_loss,
         "accuracy": acc,
         "margin": margin,
         "PR": pr,
         "W": W,
         "pred": pred.numpy(),
+        "loss_l": loss_l,
+        "depth": depth
     }
+    return result
 
-pkl.dump(results, open('test_multiclass_data_results.pkl', 'wb'))
+if __name__ == "__main__":
+    depths = np.arange(1, 10)
+    n_epochs = 10000000
+    lr_init = 0.1
+    results = {}
 
-plt.yscale('log')
-plt.xlabel('Epoch')
-plt.ylabel('Loss')
-plt.title('Training Loss for Different Depths')
-plt.legend()
-plt.show()
+    # Use multiprocessing to run each depth in parallel
+    with mp.Pool(processes=min(len(depths), mp.cpu_count())) as pool:
+        # Prepare arguments for each process
+        args = [(depth, n_epochs, lr_init, X_tensor, y_tensor, X, y) for depth in depths]
+        results_list = list(pool.starmap(run_depth, args))
 
-import matplotlib.pyplot as plt
+    # Collect results and plot loss curves
+    for res in results_list:
+        depth = res["depth"]
+        results[depth] = {k: v for k, v in res.items() if k != "loss_l" and k != "depth"}
 
-# Prepare data for plotting
-final_losses = [results[depth]['final_loss'] for depth in depths]
-accuracies = [results[depth]['accuracy'] for depth in depths]
-margins = [results[depth]['margin'] for depth in depths]
-prs = [results[depth]['PR'] for depth in depths]
+    pkl.dump(results, open('test_multiclass_data_results.pkl', 'wb'))
 
-fig, axs = plt.subplots(2, 2, figsize=(6, 6))
-axs = axs.flatten()
+    plt.figure(figsize=(10, 6))
+    for depth in depths:
+        plt.plot(results[depth]["loss_l"], label=f"Depth {depth}")
+    plt.yscale('log')
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.title('Training Loss for Different Depths')
+    plt.legend()
+    plt.show()
 
-axs[0].plot(depths, final_losses, marker='o')
-axs[0].set_title('Final Loss vs Depth')
-axs[0].set_xlabel('Depth')
-axs[0].set_ylabel('Final Loss')
-axs[0].set_yscale('log')
+    # Prepare data for plotting
+    final_losses = [results[depth]['final_loss'] for depth in depths]
+    accuracies = [results[depth]['accuracy'] for depth in depths]
+    margins = [results[depth]['margin'] for depth in depths]
+    prs = [results[depth]['PR'] for depth in depths]
 
-axs[1].plot(depths, accuracies, marker='o')
-axs[1].set_title('Accuracy vs Depth')
-axs[1].set_xlabel('Depth')
-axs[1].set_ylabel('Accuracy')
+    fig, axs = plt.subplots(2, 2, figsize=(6, 6))
+    axs = axs.flatten()
 
-axs[2].plot(depths, margins, marker='o')
-axs[2].set_title('Margin vs Depth')
-axs[2].set_xlabel('Depth')
-axs[2].set_ylabel('Margin')
+    axs[0].plot(depths, final_losses, marker='o')
+    axs[0].set_title('Final Loss vs Depth')
+    axs[0].set_xlabel('Depth')
+    axs[0].set_ylabel('Final Loss')
+    axs[0].set_yscale('log')
 
-axs[3].plot(depths, prs, marker='o')
-axs[3].set_title('PR vs Depth')
-axs[3].set_xlabel('Depth')
-axs[3].set_ylabel('PR')
+    axs[1].plot(depths, accuracies, marker='o')
+    axs[1].set_title('Accuracy vs Depth')
+    axs[1].set_xlabel('Depth')
+    axs[1].set_ylabel('Accuracy')
 
-plt.tight_layout()
-plt.show()
+    axs[2].plot(depths, margins, marker='o')
+    axs[2].set_title('Margin vs Depth')
+    axs[2].set_xlabel('Depth')
+    axs[2].set_ylabel('Margin')
 
-# Optionally, also show predictions for each depth
-for depth in depths:
-    r = results[depth]
-    print(f"Depth {depth}: Predictions: {r['pred']}, True: {y}")
+    axs[3].plot(depths, prs, marker='o')
+    axs[3].set_title('PR vs Depth')
+    axs[3].set_xlabel('Depth')
+    axs[3].set_ylabel('PR')
 
-end_time = time.time()
-print(f"Total run time: {(end_time - start_time)/60/60:.2f} hourse")
+    plt.tight_layout()
+    plt.show()
 
-plt.scatter(margins, prs, c=depths, cmap='viridis')
-plt.colorbar()
-plt.show()
+    # Optionally, also show predictions for each depth
+    for depth in depths:
+        r = results[depth]
+        print(f"Depth {depth}: Predictions: {r['pred']}, True: {y}")
 
+    end_time = time.time()
+    print(f"Total run time: {(end_time - start_time)/60/60:.2f} hourse")
 
+    plt.scatter(margins, prs, c=depths, cmap='viridis')
+    plt.colorbar()
+    plt.show()
