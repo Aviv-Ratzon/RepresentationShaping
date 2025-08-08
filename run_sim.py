@@ -209,7 +209,11 @@ def create_data(C):
                     v = recursive_indexing(vec, loc)
                     next_loc = list(loc)
                     next_loc[dim] += a
-                    if C.mask_states and ((tuple(loc) in C.mask_states) or (tuple(next_loc) in C.mask_states)):
+                    if C.mask_states and any(
+                        tuple([loc[i] + (step if i == dim else 0) for i in range(len(loc))]) in C.mask_states
+                        for step in (range(0, a + 1) if a >= 0 else range(0, a - 1, -1))
+                    ):
+                        print(f'skipped {loc} to {next_loc}')
                         continue
                     v_next = recursive_indexing(vec, next_loc)
                     corridor.append(cor)
