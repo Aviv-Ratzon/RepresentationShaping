@@ -1,9 +1,13 @@
+import pickle as pkl
 from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
 import numpy as np
+import time
+
+start_time = time.time()
 
 # Data: 3 points, 3 classes
 X = np.array([
@@ -29,13 +33,14 @@ class DeepLinearNet(nn.Module):
             x = layer(x)
         return x
 
-depths = [1, 2, 3, 4, 5]
-n_epochs = 1000#0000
-lr = 0.05
+depths = np.arange(1, 10)
+n_epochs = 10000000
+lr = 0.1
 results = {}
 plt.figure(figsize=(10, 6))
 
 for depth in depths:
+    lr *= 0.5
     model = DeepLinearNet(depth).double()
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=lr)
@@ -73,6 +78,8 @@ for depth in depths:
         "W": W,
         "pred": pred.numpy(),
     }
+
+pkl.dump(results, open('test_multiclass_data_results.pkl', 'wb'))
 
 plt.yscale('log')
 plt.xlabel('Epoch')
@@ -120,3 +127,12 @@ plt.show()
 for depth in depths:
     r = results[depth]
     print(f"Depth {depth}: Predictions: {r['pred']}, True: {y}")
+
+end_time = time.time()
+print(f"Total run time: {(end_time - start_time)/60/60:.2f} hourse")
+
+plt.scatter(margins, prs, c=depths, cmap='viridis')
+plt.colorbar()
+plt.show()
+
+
