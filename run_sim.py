@@ -85,6 +85,7 @@ class Config:
         self.input_size=100
         self.corridor_dim = 1
         self.input_smoothing = 0
+        self.mask_states = None
 
         # Model
         self.sig_h_2 = None
@@ -202,12 +203,14 @@ def create_data(C):
                         a = a * (1 if cor == 0 else -1)
                     # a_i = np.where(actions == a)[0][0]
                     # a_i += (cor * int(C.split_actions) * (n_actions//n_cors))
-                    if loc[dim] + a < 0 or loc[dim] + a >= C.length_corridors[cor] or (dim>0 and a==0):
+                    if (loc[dim] + a < 0) or (loc[dim] + a >= C.length_corridors[cor]) or (dim>0 and a==0):
                         continue
                     action_in = action_h(dim, cor, a, int(C.split_actions))
                     v = recursive_indexing(vec, loc)
                     next_loc = list(loc)
                     next_loc[dim] += a
+                    if C.mask_states and ((tuple(loc) in C.mask_states) or (tuple(next_loc) in C.mask_states)):
+                        continue
                     v_next = recursive_indexing(vec, next_loc)
                     corridor.append(cor)
                     dim_l.append(dim)

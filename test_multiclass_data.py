@@ -108,7 +108,7 @@ if __name__ == "__main__":
     plt.ylabel('Loss')
     plt.title('Training Loss for Different Depths')
     plt.legend()
-    plt.savefig('loss_curves.png')
+    plt.savefig('figures/loss_curves.png')
     plt.close()
 
     # Prepare data for plotting
@@ -142,7 +142,7 @@ if __name__ == "__main__":
     axs[3].set_ylabel('PR')
 
     plt.tight_layout()
-    plt.savefig('metrics_vs_depth.png')
+    plt.savefig('figures/metrics_vs_depth.png')
     plt.close()
 
     # Optionally, also show predictions for each depth
@@ -155,5 +155,5 @@ if __name__ == "__main__":
 
     plt.scatter(margins, prs, c=depths, cmap='viridis')
     plt.colorbar()
-    plt.savefig('margin_vs_pr.png')
+    plt.savefig('figures/margin_vs_pr.png')
     plt.close()
