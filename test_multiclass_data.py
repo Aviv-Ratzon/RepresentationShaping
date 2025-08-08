@@ -35,6 +35,8 @@ class DeepLinearNet(nn.Module):
         return x
 
 def run_depth(depth, n_epochs, lr_init, X_tensor, y_tensor, X, y):
+    print(f"Running depth {depth}")
+    start_time = time.time()
     # Each process gets its own lr, model, etc.
     lr = lr_init * (0.5 ** (depth-1))
     model = DeepLinearNet(depth).double()
@@ -75,11 +77,13 @@ def run_depth(depth, n_epochs, lr_init, X_tensor, y_tensor, X, y):
         "loss_l": loss_l,
         "depth": depth
     }
+    end_time = time.time()
+    print(f"Depth {depth} took {(end_time - start_time)/60:.2f} minutes")
     return result
 
 if __name__ == "__main__":
     depths = np.arange(1, 10)
-    n_epochs = 10000000
+    n_epochs = 1000#0000
     lr_init = 0.1
     results = {}
 
@@ -92,7 +96,7 @@ if __name__ == "__main__":
     # Collect results and plot loss curves
     for res in results_list:
         depth = res["depth"]
-        results[depth] = {k: v for k, v in res.items() if k != "loss_l" and k != "depth"}
+        results[depth] = {k: v for k, v in res.items() if k != "depth"}
 
     pkl.dump(results, open('test_multiclass_data_results.pkl', 'wb'))
 
@@ -104,7 +108,8 @@ if __name__ == "__main__":
     plt.ylabel('Loss')
     plt.title('Training Loss for Different Depths')
     plt.legend()
-    plt.show()
+    plt.savefig('loss_curves.png')
+    plt.close()
 
     # Prepare data for plotting
     final_losses = [results[depth]['final_loss'] for depth in depths]
@@ -137,7 +142,8 @@ if __name__ == "__main__":
     axs[3].set_ylabel('PR')
 
     plt.tight_layout()
-    plt.show()
+    plt.savefig('metrics_vs_depth.png')
+    plt.close()
 
     # Optionally, also show predictions for each depth
     for depth in depths:
@@ -145,8 +151,9 @@ if __name__ == "__main__":
         print(f"Depth {depth}: Predictions: {r['pred']}, True: {y}")
 
     end_time = time.time()
-    print(f"Total run time: {(end_time - start_time)/60/60:.2f} hourse")
+    print(f"Total run time: {(end_time - start_time)/60/60:.2f} hours")
 
     plt.scatter(margins, prs, c=depths, cmap='viridis')
     plt.colorbar()
-    plt.show()
+    plt.savefig('margin_vs_pr.png')
+    plt.close()
