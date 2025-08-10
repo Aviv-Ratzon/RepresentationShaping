@@ -14,38 +14,42 @@ from sklearn.decomposition import PCA
 import numpy as np
 from torch.nn import MSELoss
 
-from run_sim import Config, run_sim
-from utils import cosine_similarity, get_all_key_combinations, get_r_2, vector_angle, get_upper_triangle, calc_NC1, pca_torch
+from run_sim import *
+from utils import *
 
 num_workers = 16
 gpu_ids = np.arange(8)
 use_gpu = True
 debug = False
-result_path = './results/sweep_results_linear/MSE/again'
+result_path = './results/sweep_results_nonlinear/2d'
 modify_vars = {
-    # 'B': [0.1, 0.5, 1],
-    # 'sig_h_2': [1e-5, 1e-1],
-    # 'L': [1, 2, 3, 4],
-    'max_move': np.arange(1,16)
+    'max_move': np.arange(1, 5),
+    'G': np.arange(-.5,1.1,0.1),
+    'L': np.arange(1, 6),
+    'max_move': np.arange(1,5),
+    'hidden_size': [50, 100, 200, 500, 1000]
 }
 base_params = {
-    'linear_net': True,
-    'sig_h_2': 1e-5,
-    'learning_rate': 0.001,
-    'length_corridors': [30]*1,
+    'linear_net': False,
+    'G': 1,
+    'learning_rate': 0.1,
+    'length_corridors': [5]*1,
     'hidden_size': 100,
-    'num_epochs': 10000000,
+    'num_epochs': 100000,
     'algo_name': 'SGD',
     'loss_fn': nn.CrossEntropyLoss(),
+    'L': 5,
+    'corridor_dim': 2,
+    'max_move': 1,
 }
 
 def run_scenario(config_data):
     C = Config()
     for k,v in config_data.items():
         setattr(C, k, v)
-    X, y, corridor, loc_X, loc_y, action_taken, hidden_states, loss_l, accuracy_l, outputs, hidden_l, final_weights, initial_weights = run_sim(C)
+    data_dict = run_sim_wrapper(C)
 
-    hidden = hidden_states[-1].detach().cpu().numpy()
+    hidden = data_dict['hidden_states'][-1].detach().cpu().numpy()
 
     if np.isnan(hidden).any():
         return None
@@ -109,40 +113,6 @@ def run_scenario(config_data):
     # }
 
 
-
-    X_np = X.cpu().numpy()  # Convert to numpy array if X is a torch tensor
-    y_np = y.cpu().numpy()  # Convert to numpy array if y is a torch tensor
-    h_np = hidden  # Convert to numpy array if hidden is a torch tensor
-    hidden = hidden_states[-1].detach().cpu().numpy()
-    X_dist = torch.cdist(X, X).cpu().numpy()
-    y_dist = torch.cdist(y, y).cpu().numpy()
-    hidden_dist = torch.cdist(hidden_states[-1].detach(), hidden_states[-1].detach()).cpu().numpy()
-    
-
-    data_dict = {
-        'X': X.cpu(),
-        'y': y.cpu(),
-        'corridor': corridor,
-        'loc_X': loc_X.squeeze(),
-        'loc_y': loc_y.squeeze(),
-        'action_taken': action_taken,
-        'hidden_states': [h.cpu() for h in hidden_states],
-        'loss_l': loss_l,
-        'accuracy_l': accuracy_l,
-        'outputs': outputs,
-        'hidden_l': hidden_l,
-        'X_dist': X_dist,
-        'y_dist': y_dist,
-        'hidden_dist': hidden_dist,
-        'model_state':  {k: v.cpu() for k, v in final_weights.items()},
-        'initial_weights': {k: v.cpu() for k, v in initial_weights.items()},
-        'n_corridors': n_corridors,
-        'X_np': X_np,
-        'y_np': y_np,
-        'h_np': h_np,
-        'C': C
-    }
-
     # Convert the dictionary to a pandas DataFrame
     # df = pd.DataFrame([results])
     return data_dict
@@ -163,17 +133,17 @@ def worker_function(args):
         time_per_iter = elapsed_time / counter.value
         print(f"Completed {counter.value}/{num_runs} runs --- running time {elapsed_time:.2f} / {total_time:.2f} minutes --- {time_per_iter:.2f} min/iter")
 
-    # if result is not None:
-    #     file_name = f'{result_path}/{run_name}.csv'
-    #     if not os.path.isfile(file_name):
-    #         result.to_csv(file_name, index=False, mode='w', header=True)
-    #     else:
-    #         result.to_csv(file_name, index=False, mode='a', header=False)
-    data_dict_l.append(result)
-    if len(data_dict_l) % 10 == 0:
-        data_dict_l_save = list(data_dict_l)
-        with open('data_dict_l_from_scan.pkl', 'wb') as f:
-            pkl.dump(data_dict_l_save, f)
+    if result is not None:
+        file_name = f'{result_path}/{run_name}.csv'
+        if not os.path.isfile(file_name):
+            result.to_csv(file_name, index=False, mode='w', header=True)
+        else:
+            result.to_csv(file_name, index=False, mode='a', header=False)
+    # data_dict_l.append(result)
+    # if len(data_dict_l) % 10 == 0:
+    #     data_dict_l_save = list(data_dict_l)
+    #     with open('data_dict_l_from_scan.pkl', 'wb') as f:
+    #         pkl.dump(data_dict_l_save, f)
 
     return result
 
@@ -182,7 +152,7 @@ def get_args_list_single_var():
     for var_name in modify_vars.keys():
         iter_items = list(itertools.product(np.arange(0, 10), modify_vars[var_name]))
         for i, (seed, var_val) in enumerate(iter_items):
-            lr = 0.1**(8/2) if var_name != 'L' else 0.1**(var_val/2)
+            # lr = 0.1**(8/2) if var_name != 'L' else 0.1**(var_val/2)
             args_list.append([{**base_params, **{'seed': seed, 'gpu_id': gpu_ids[i % len(gpu_ids)]}, **{var_name: var_val}},
                               f'sweep_params_{var_name}'])
     return args_list
@@ -201,7 +171,7 @@ if __name__ == "__main__":
     print('Started parameter sweep.....')
     if not os.path.isdir(result_path):
         os.makedirs(result_path)
-    args_list = get_args_list_all_combs()
+    args_list = get_args_list_single_var()
     
     # Create a managed list that can be shared between processes
     manager = Manager()

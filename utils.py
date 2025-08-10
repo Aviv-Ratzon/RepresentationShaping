@@ -70,9 +70,10 @@ def vector_angle(a, b):
     return np.rad2deg(np.arccos(cosine_similarity(a, b)))
 
 def get_order(data_dict):
+    C = data_dict['C']
     h_np = data_dict['hidden_states'][-1].cpu().numpy()
     loc_y = data_dict['loc_y']
-    order = get_r_2(PCA(n_components=1).fit_transform(h_np), loc_y)
+    order = get_r_2(PCA(n_components=C.corridor_dim).fit_transform(h_np), loc_y)
     return order
 
 def get_r_2(X, y):
