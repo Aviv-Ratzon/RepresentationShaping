@@ -43,6 +43,7 @@ def run_depth(depth, n_epochs, lr_init, X_tensor, y_tensor, X, y):
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.SGD(model.parameters(), lr=lr)
     loss_l = []
+    margins_l = []
     for epoch in tqdm(range(n_epochs), desc=f"Depth {depth}", leave=False, disable=True):
         optimizer.zero_grad()
         outputs = model(X_tensor)
@@ -50,6 +51,17 @@ def run_depth(depth, n_epochs, lr_init, X_tensor, y_tensor, X, y):
         loss.backward()
         optimizer.step()
         loss_l.append(loss.item())
+        if epoch % (n_epochs//1000):            
+            W = model.layers[0].weight.detach().numpy().T
+            for i in range(1, len(model.layers)):
+                W = W @ model.layers[i].weight.detach().numpy().T
+            W /= np.linalg.norm(W)
+            scores = X @ W
+            true_scores = scores[np.arange(3), y]
+            scores_margin = scores.copy()
+            scores_margin[np.arange(3), y] = -100
+            margin = (true_scores[:, None] - scores_margin).min(1).min()
+            margins_l.append(margin)
     # Final predictions and metrics
     with torch.no_grad():
         outputs = model(X_tensor)
@@ -71,6 +83,7 @@ def run_depth(depth, n_epochs, lr_init, X_tensor, y_tensor, X, y):
         "final_loss": final_loss,
         "accuracy": acc,
         "margin": margin,
+        "margins_l": margins_l,
         "PR": pr,
         "W": W,
         "pred": pred.numpy(),
@@ -83,8 +96,8 @@ def run_depth(depth, n_epochs, lr_init, X_tensor, y_tensor, X, y):
 
 if __name__ == "__main__":
     depths = np.arange(1, 10)
-    n_epochs = 1000#0000
-    lr_init = 0.1
+    n_epochs = 1000000#0
+    lr_init = 0.05
     results = {}
 
     # Use multiprocessing to run each depth in parallel
@@ -109,6 +122,17 @@ if __name__ == "__main__":
     plt.title('Training Loss for Different Depths')
     plt.legend()
     plt.savefig('figures/loss_curves.png')
+    plt.close()
+
+    plt.figure(figsize=(10, 6))
+    for depth in depths:
+        plt.plot(results[depth]["margins_l"], label=f"Depth {depth}")
+    # plt.yscale('log')
+    plt.xlabel('Epoch')
+    plt.ylabel('Margin')
+    plt.title('Training Margin for Different Depths')
+    plt.legend()
+    plt.savefig('figures/margins_curves.png')
     plt.close()
 
     # Prepare data for plotting
