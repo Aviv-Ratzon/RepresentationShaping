@@ -10,3 +10,4 @@ data_dict_l.pkl
 data_dict_l_from_scan.pkl
 data_dict_l_from_scan_lr_0.01.pkl
 figures/loss_curves.png
+__pycache__/
