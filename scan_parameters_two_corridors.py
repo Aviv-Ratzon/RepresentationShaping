@@ -17,30 +17,30 @@ from torch.nn import MSELoss
 from run_sim import *
 from utils import *
 
-num_workers = 16
+num_seeds = 10
+num_workers = 32
 gpu_ids = np.arange(8)
 use_gpu = True
 debug = False
-result_path = './results/sweep_results_nonlinear/2d'
+result_path = './results/sweep_results_linear/max_move_sweep_L_50'
+run_type = 'single_var' #'all_combs'
 modify_vars = {
-    'max_move': np.arange(1, 5),
-    'G': np.arange(-.5,1.1,0.1),
-    'L': np.arange(1, 6),
-    'max_move': np.arange(1,5),
-    'hidden_size': [50, 100, 200, 500, 1000]
+    # 'G': np.arange(.5,1.1,0.1),
+    'max_move': np.arange(15, 35),
 }
 base_params = {
-    'linear_net': False,
+    'linear_net': True,
     'G': 1,
-    'learning_rate': 0.1,
-    'length_corridors': [5]*1,
-    'hidden_size': 100,
-    'num_epochs': 100000,
+    'sig_2_h': None,
+    'learning_rate': 0.001,
+    'length_corridors': [50]*1,
+    'hidden_size': 151,
+    'num_epochs': 1000000,
     'algo_name': 'SGD',
     'loss_fn': nn.CrossEntropyLoss(),
-    'L': 5,
-    'corridor_dim': 2,
-    'max_move': 1,
+    'L': 3,
+    'corridor_dim': 1,
+    'max_move': 15,
 }
 
 def run_scenario(config_data):
@@ -56,66 +56,74 @@ def run_scenario(config_data):
 
     results = {}
     n_corridors = len(C.length_corridors)
+    corridor = data_dict['corridor']
+    hidden_states = data_dict['hidden_states']
+    loss_l = data_dict['loss_l']
+    accuracy_l = data_dict['accuracy_l']
+    loc_y = data_dict['loc_y']
+    y = data_dict['y']
+    X = data_dict['X']
     ########
     device = torch.device(f"cuda:{C.gpu_id}" if torch.cuda.is_available() and use_gpu else "cpu")
     hidden_tensor = torch.tensor(hidden, dtype=torch.float32, device=device)
     corridor_tensor = torch.tensor(corridor, dtype=torch.long, device=device)
+    
+    def transform_pca(X, p):
+        components = p['components']
+        mean = X.mean(dim=0, keepdim=True)
+        X_centered = X - mean
+        return (X_centered @ components.T).cpu().numpy()
 
+    # PCA per corridor
+    pca_corridors = []
+    for i in range(n_corridors):
+        X_i = hidden_tensor[corridor_tensor == i]
+        curr_pca = pca_torch(X_i)
+        pca_corridors.append(curr_pca)
 
-    # def transform_pca(X, p):
-    #     components = p['components']
-    #     mean = X.mean(dim=0, keepdim=True)
-    #     X_centered = X - mean
-    #     return (X_centered @ components.T).cpu().numpy()
+    # Global PCA
+    pca = pca_torch(hidden_tensor)
+    #########
+    # pca = PCA(); pca_corridors = [PCA() for _ in range(n_corridors)];
+    # [p.fit(hidden[corridor == i]) for i, p in enumerate(pca_corridors)]
+    # pca.fit(hidden)
 
-    # # PCA per corridor
-    # pca_corridors = []
-    # for i in range(n_corridors):
-    #     X_i = hidden_tensor[corridor_tensor == i]
-    #     curr_pca = pca_torch(X_i)
-    #     pca_corridors.append(curr_pca)
+    if n_corridors > 1:
+        model = LogisticRegression(max_iter=1000).fit(hidden, corridor)
+        corridor_pred = model.predict(hidden)
+        results['res_accuracy_pred_corridors'] = accuracy_score(corridor, corridor_pred)
+        results['res_alignment_l'] = np.mean([cosine_similarity(pca_corridors[i]['components'][0], pca_corridors[i+1]['components'][0]).item() for i in range(n_corridors-1)])
+    else:
+        results['res_accuracy_pred_corridors'] = 1
+        results['res_alignment_l'] = 0
+    results['res_order_l'] = np.mean([get_r_2(transform_pca(hidden_tensor[corridor_tensor==i], p)[:, :C.corridor_dim], loc_y[corridor==i]) for i, p in enumerate(pca_corridors)])
+    results['res_explained_variance_1st_pc_l'] = np.mean([p['explained_variance_ratio'][0].item() for i, p in enumerate(pca_corridors)])
+    results['res_PR'] = (np.sum(pca['explained_variance']) ** 2 / np.sum(pca['explained_variance'] ** 2)).item()
+    results['res_PR_l'] = np.mean([(np.sum(p['explained_variance']) ** 2 / np.sum(p['explained_variance'] ** 2)).item() for i, p in enumerate(pca_corridors)])
 
-    # # Global PCA
-    # pca = pca_torch(hidden_tensor)
-    # #########
-    # # pca = PCA(); pca_corridors = [PCA() for _ in range(n_corridors)];
-    # # [p.fit(hidden[corridor == i]) for i, p in enumerate(pca_corridors)]
-    # # pca.fit(hidden)
+    hidden_centers = torch.stack([hidden_states[-1][y[:,i]==1].mean(0) for i in range(y.shape[1])])
+    hidden_between_cluster_dists = torch.diag(torch.cdist(hidden_centers, hidden_centers),1).mean().item()
+    hidden_within_cluster_dists = torch.tensor([get_upper_triangle(torch.cdist(hidden_states[-1][y[:,i]==1], hidden_states[-1][y[:,i]==1])).mean() for i in range(y.shape[1])]).mean().item()
+    hidden_mean_norm = torch.linalg.norm(hidden_states[-1], dim=1).mean().item()
+    results['res_cluster_collapse_norm_between'] = hidden_within_cluster_dists / hidden_between_cluster_dists
+    results['res_cluster_collapse_norm_size'] = hidden_within_cluster_dists / hidden_mean_norm
 
-    # if n_corridors > 1:
-    #     model = LogisticRegression(max_iter=1000).fit(hidden, corridor)
-    #     corridor_pred = model.predict(hidden)
-    #     results['res_accuracy_pred_corridors'] = accuracy_score(corridor, corridor_pred)
-    #     results['res_alignment_l'] = np.mean([cosine_similarity(pca_corridors[i]['components'][0], pca_corridors[i+1]['components'][0]).item() for i in range(n_corridors-1)])
-    # else:
-    #     results['res_accuracy_pred_corridors'] = 1
-    #     results['res_alignment_l'] = 0
-    # results['res_order_l'] = np.mean([get_r_2(transform_pca(hidden_tensor[corridor_tensor==i], p)[:, [0]], loc_y[corridor==i]) for i, p in enumerate(pca_corridors)])
-    # results['res_explained_variance_1st_pc_l'] = np.mean([p['explained_variance_ratio'][0].item() for i, p in enumerate(pca_corridors)])
-    # results['res_PR'] = (np.sum(pca['explained_variance']) ** 2 / np.sum(pca['explained_variance'] ** 2)).item()
-    # results['res_PR_l'] = np.mean([(np.sum(p['explained_variance']) ** 2 / np.sum(p['explained_variance'] ** 2)).item() for i, p in enumerate(pca_corridors)])
+    results['res_NC1'] = calc_NC1(hidden_tensor.cpu().numpy(), y.cpu().numpy().argmax(1))
 
-    # hidden_centers = torch.stack([hidden_states[-1][y[:,i]==1].mean(0) for i in range(y.shape[1])])
-    # hidden_between_cluster_dists = torch.diag(torch.cdist(hidden_centers, hidden_centers),1).mean().item()
-    # hidden_within_cluster_dists = torch.tensor([get_upper_triangle(torch.cdist(hidden_states[-1][y[:,i]==1], hidden_states[-1][y[:,i]==1])).mean() for i in range(y.shape[1])]).mean().item()
-    # hidden_mean_norm = torch.linalg.norm(hidden_states[-1], dim=1).mean().item()
-    # results['res_cluster_collapse_norm_between'] = hidden_within_cluster_dists / hidden_between_cluster_dists
-    # results['res_cluster_collapse_norm_size'] = hidden_within_cluster_dists / hidden_mean_norm
-
-    # results['res_NC1'] = calc_NC1(hidden_tensor, y)
-
-    # # Create a dictionary with the config values and results
-    # results = {
-    #         **config_data,
-    #         **C.__dict__.copy(),
-    #         **{'loss': loss_l[-1], 'res_accuracy': accuracy_l[-1]},
-    #         **results,
-    # }
+    # Create a dictionary with the config values and results
+    results = {
+            **config_data,
+            **C.__dict__.copy(),
+            **{'loss': loss_l[-1], 'res_accuracy': accuracy_l[-1]},
+            **results,
+    }
 
 
     # Convert the dictionary to a pandas DataFrame
-    # df = pd.DataFrame([results])
-    return data_dict
+    results = pd.DataFrame([results])
+    return results
+
+    # return data_dict
 
 
 
@@ -139,22 +147,24 @@ def worker_function(args):
             result.to_csv(file_name, index=False, mode='w', header=True)
         else:
             result.to_csv(file_name, index=False, mode='a', header=False)
-    # data_dict_l.append(result)
-    # if len(data_dict_l) % 10 == 0:
-    #     data_dict_l_save = list(data_dict_l)
-    #     with open('data_dict_l_from_scan.pkl', 'wb') as f:
-    #         pkl.dump(data_dict_l_save, f)
 
-    return result
+        # data_dict_l.append(result)
+        # if len(data_dict_l) % 10 == 0:
+        #     data_dict_l_save = list(data_dict_l)
+        #     with open('data_dict_l_from_scan.pkl', 'wb') as f:
+                # pkl.dump(data_dict_l_save, f)
+
 
 def get_args_list_single_var():
     args_list = []
     for var_name in modify_vars.keys():
-        iter_items = list(itertools.product(np.arange(0, 10), modify_vars[var_name]))
+        iter_items = list(itertools.product(np.arange(0, num_seeds), modify_vars[var_name]))
         for i, (seed, var_val) in enumerate(iter_items):
             # lr = 0.1**(8/2) if var_name != 'L' else 0.1**(var_val/2)
             args_list.append([{**base_params, **{'seed': seed, 'gpu_id': gpu_ids[i % len(gpu_ids)]}, **{var_name: var_val}},
                               f'sweep_params_{var_name}'])
+            # args_list.append([{**base_params, **{'seed': seed, 'gpu_id': gpu_ids[i % len(gpu_ids)]}, **{var_name: var_val}},
+                            #   f'sweep_params_combo'])
     return args_list
 
 def get_args_list_all_combs():
@@ -171,12 +181,16 @@ if __name__ == "__main__":
     print('Started parameter sweep.....')
     if not os.path.isdir(result_path):
         os.makedirs(result_path)
-    args_list = get_args_list_single_var()
+    if run_type == 'single_var':
+        args_list = get_args_list_single_var()
+    elif run_type == 'all_combs':
+        args_list = get_args_list_all_combs()
     
     # Create a managed list that can be shared between processes
     manager = Manager()
     data_dict_l = manager.list()
     
+    np.random.shuffle(args_list)
     args_list = [a + [len(args_list), start_time, data_dict_l] for a in args_list]
     # subprocess
     counter = mp.Value('i', 0)

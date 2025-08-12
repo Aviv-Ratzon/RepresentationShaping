@@ -213,7 +213,6 @@ def create_data(C):
                         tuple([loc[i] + (step if i == dim else 0) for i in range(len(loc))]) in C.mask_states
                         for step in (range(0, a + 1) if a >= 0 else range(0, a - 1, -1))
                     ):
-                        print(f'skipped {loc} to {next_loc}')
                         continue
                     v_next = recursive_indexing(vec, next_loc)
                     corridor.append(cor)
@@ -311,7 +310,7 @@ def train_model(C: Config, X, y, model, action_taken):
         with torch.no_grad():
             if epoch in sample_inds[::10]:
                 outputs, hidden_states = model(X)
-                hidden_l.append([h.cpu().detach().numpy() for h in hidden_states])
+                # hidden_l.append([h.cpu().detach().numpy() for h in hidden_states])
 
             if epoch in sample_inds:
                 outputs, hidden_states = model(X)
