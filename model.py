@@ -37,8 +37,8 @@ class DNN(nn.Module):
             if fixed_output:
                 nn.init.normal_(self.output_layer.weight)
             else:
-                nn.init.normal_(self.output_layer.weight)
-                nn.init.xavier_normal_(self.output_layer.weight, gain=1) # G)
+                # nn.init.normal_(self.output_layer.weight)
+                nn.init.xavier_normal_(self.output_layer.weight, gain=G)
         # sigma = G ** (-1 / self.num_layers + 1)
         # fan_in = self.input_layer.weight.size(1)
         # scale = sigma / fan_in**0.5
