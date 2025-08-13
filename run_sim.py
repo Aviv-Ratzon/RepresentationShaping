@@ -310,7 +310,7 @@ def train_model(C: Config, X, y, model, action_taken):
         with torch.no_grad():
             if epoch in sample_inds[::10]:
                 outputs, hidden_states = model(X)
-                # hidden_l.append([h.cpu().detach().numpy() for h in hidden_states])
+                hidden_l.append([h.cpu().detach().numpy() for h in hidden_states])
 
             if epoch in sample_inds:
                 outputs, hidden_states = model(X)
