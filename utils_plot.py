@@ -2,7 +2,7 @@ from matplotlib import pyplot as plt
 import torch
 from sklearn.decomposition import PCA
 import numpy as np
-from utils import calc_PR, compute_gradient, get_loss, get_state_dict_norm
+from utils import *
 
 
 def plot_loss_and_dist(data_dict):
@@ -30,16 +30,32 @@ def plot_loss_and_dist(data_dict):
 
 
 def plot_pca(data_dict, title="", axs=None):
-    loc_y = data_dict['loc_y'];
-    hidden_states = data_dict['hidden_states'];
+    loc_y = data_dict['loc_y']
+    hidden_states = data_dict['hidden_states']
     action_taken = data_dict['action_taken']
     loss_l = data_dict['loss_l']; accuracy_l = data_dict['accuracy_l']
+    C = data_dict['C']
+    X_np = data_dict['X'].cpu().numpy()
+    final_weights = data_dict['final_weights']
 
-    h_np = hidden_states[-1].cpu().detach().numpy()
-    PR = calc_PR(h_np)
+    hidden = hidden_states[-1].cpu().detach().numpy()
 
-    pca = PCA().fit(h_np)
-    X_reduced = pca.transform(h_np)
+    PR = calc_PR(hidden)
+    if not C.bias:
+        W_effective = get_effective_W_from_model_dict(final_weights).cpu().numpy()
+        W_PR = calc_PR(W_effective)
+        if C.L == 0:
+            U, S, V = np.linalg.svd(W_effective, full_matrices=False)
+            hidden = X_np @ U @ np.diag(S)
+    else:
+        W_PR = 0
+    hidden_pr = calc_PR(hidden)
+    
+    # alignment = alignment_score(hidden[corridor==0], hidden[corridor==1]) if n_corridors > 1 else 0
+    order = get_r_2(PCA(n_components=1).fit_transform(hidden), loc_y)
+
+    pca = PCA().fit(hidden)
+    X_reduced = pca.transform(hidden)
     if axs is None:
         fig, axs = plt.subplots(1, 4, figsize=(20/2, 5/2))
         axs[0].set_ylabel(title)
@@ -47,8 +63,8 @@ def plot_pca(data_dict, title="", axs=None):
     ax1 = axs[0]
     ax1.plot(np.cumsum(pca.explained_variance_ratio_), marker='o')
     ax1.set_xlabel('Number of Components')
-    ax1.set_ylabel('Cumulative EVR')
-    ax1.set_title(f'Cumulative EVR --- PR: {PR:.2f}')
+    # ax1.set_ylabel('Cumulative EVR')
+    ax1.set_title(f'order = {order:.2f} --- W PR = {W_PR:.2f} --- hidden PR = {hidden_pr:.2f}')
     ax1.set_ylim(-0.1, 1.1)
 
     ax1 = axs[1]
