@@ -17,28 +17,30 @@ from torch.nn import MSELoss
 from run_sim import *
 from utils import *
 
-num_seeds = 10
+num_seeds = 2
 num_workers = 32
 gpu_ids = np.arange(8)
 use_gpu = True
 debug = False
-result_path = './results/sweep_results_linear/max_move_sweep_L_50'
+result_path = './results/sweep_results_linear/max_move_sweep_layers_0_L_20'
 run_type = 'single_var' #'all_combs'
 modify_vars = {
     # 'G': np.arange(.5,1.1,0.1),
-    'max_move': np.arange(15, 35),
+    'max_move': np.arange(0, 20),
 }
 base_params = {
+
     'linear_net': True,
     'G': 1,
     'sig_2_h': None,
-    'learning_rate': 0.001,
-    'length_corridors': [50]*1,
-    'hidden_size': 151,
-    'num_epochs': 1000000,
+    'learning_rate': 1,
+    'length_corridors': [20]*1,
+    'hidden_size': 61,
+    'num_epochs': 10000000,
     'algo_name': 'SGD',
+
     'loss_fn': nn.CrossEntropyLoss(),
-    'L': 3,
+    'L': 0,
     'corridor_dim': 1,
     'max_move': 15,
 }
@@ -50,6 +52,10 @@ def run_scenario(config_data):
     data_dict = run_sim_wrapper(C)
 
     hidden = data_dict['hidden_states'][-1].detach().cpu().numpy()
+    W_effective = get_effective_W_from_model_dict(data_dict['final_weights'])
+    U, S, V = np.linalg.svd(W_effective.cpu().numpy(), full_matrices=False)
+    if data_dict['C'].L == 0:
+        hidden = hidden @ U @ np.diag(S)
 
     if np.isnan(hidden).any():
         return None
