@@ -333,8 +333,9 @@ def train_model(C: Config, X, y, model, action_taken):
 
 def run_sim(C: Config):
     device = torch.device(f"cuda:{C.gpu_id}" if torch.cuda.is_available() and use_gpu else "cpu")
-    torch.manual_seed(C.seed)
-    np.random.seed(C.seed)
+    if C.seed is not None:
+        torch.manual_seed(C.seed)
+        np.random.seed(C.seed)
     X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions = create_data(C)
 
     X = torch.tensor(X, dtype=torch.float32).to(device)

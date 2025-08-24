@@ -419,6 +419,9 @@ def get_AB(X, w1, w2, b, n):
     B = S_n @ Vn                   # (n, c)
     return A, B
 
+def calc_accuracy_from_W(W, X, y):
+    return ((X@W).argmax(1)==y.argmax(1)).mean()
+
 def make_synthetic_model_dict(data_dict):
     X_np = data_dict['X'].cpu().numpy()
     y_np = data_dict['y'].cpu().numpy()
