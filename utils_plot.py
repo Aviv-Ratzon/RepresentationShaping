@@ -108,3 +108,52 @@ def plot_solution_direction_loss_space(data_dict_l, labels_l, max_norm=50):
     plt.legend()
     plt.show()
 
+
+def plot_pca_1d(data_dict, title="", axs=None):
+    loc_y = data_dict['loc_y']
+    hidden_states = data_dict['hidden_states']
+    action_taken = data_dict['action_taken']
+    loss_l = data_dict['loss_l']; accuracy_l = data_dict['accuracy_l']
+    C = data_dict['C']
+    X_np = data_dict['X'].cpu().numpy()
+    final_weights = data_dict['final_weights']
+
+    hidden = hidden_states[-1].cpu().detach().numpy()
+
+    if C.L == 0:
+        W_effective = get_effective_W_from_model_dict(final_weights).cpu().numpy()
+        U, S, V = np.linalg.svd(W_effective, full_matrices=False)
+        hidden = X_np @ U @ np.diag(S)
+    
+    # alignment = alignment_score(hidden[corridor==0], hidden[corridor==1]) if n_corridors > 1 else 0
+    order = get_r_2(PCA(n_components=1).fit_transform(hidden), loc_y)
+
+    pca = PCA().fit(hidden)
+    X_reduced = pca.transform(hidden)
+    if axs is None:
+        fig, axs = plt.subplots(1, 4, figsize=(20/2, 5/2))
+        axs[0].set_ylabel(title)
+    # Add cumulative explained variance ratio in the first row
+    ax1 = axs[0]
+    ax1.plot(np.cumsum(pca.explained_variance_ratio_), marker='o')
+    ax1.set_xlabel('Number of Components')
+    # ax1.set_ylabel('Cumulative EVR')
+    ax1.set_title(f'order = {order:.2f}')
+    ax1.set_ylim(-0.1, 1.1)
+
+    ax1 = axs[1]
+    s = ax1.scatter(X_reduced[:, 0], np.zeros_like(X_reduced[:, 0]), c=loc_y, cmap='coolwarm', alpha=0.7)
+    ax1.set_xlabel(f'Component 1')
+    ax1.axis('equal')
+
+    ax1 = axs[2]
+    ax1.scatter(X_reduced[:, 0], loc_y, c=loc_y)
+
+    axs[3].plot(loss_l)
+    axs[3].set_yscale('log')
+    ax2 = axs[3].twinx()
+    ax2.plot(accuracy_l, 'r')
+    ax2.set_ylim(-0.1, 1.1)
+    axs[3].set_title("Loss")
+
+    plt.tight_layout()
