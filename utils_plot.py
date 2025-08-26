@@ -5,6 +5,8 @@ import numpy as np
 from utils import *
 
 
+markers = ['o', 'x', '*', 'v', '^', 'p', 'h', '8', 'X', 'd']
+
 def plot_loss_and_dist(data_dict):
     loc_y = data_dict['loc_y']; corridor = data_dict['corridor']; loss_l = data_dict['loss_l']; accuracy_l = data_dict['accuracy_l']
     X = data_dict['X']; y = data_dict['y'];  hidden_states = data_dict['hidden_states'];
@@ -34,11 +36,14 @@ def plot_pca(data_dict, title="", axs=None):
     hidden_states = data_dict['hidden_states']
     action_taken = data_dict['action_taken']
     loss_l = data_dict['loss_l']; accuracy_l = data_dict['accuracy_l']
+    y = data_dict['y']
     C = data_dict['C']
+    corridor = data_dict['corridor']
     X_np = data_dict['X'].cpu().numpy()
     final_weights = data_dict['final_weights']
 
     hidden = hidden_states[-1].cpu().detach().numpy()
+    hidden_dist = torch.cdist(hidden_states[-1], hidden_states[-1]).cpu().numpy()
 
     PR = calc_PR(hidden)
     if not C.bias:
@@ -57,7 +62,7 @@ def plot_pca(data_dict, title="", axs=None):
     pca = PCA().fit(hidden)
     X_reduced = pca.transform(hidden)
     if axs is None:
-        fig, axs = plt.subplots(1, 4, figsize=(20/2, 5/2))
+        fig, axs = plt.subplots(1, 5, figsize=(25/2, 5/2))
         axs[0].set_ylabel(title)
     # Add cumulative explained variance ratio in the first row
     ax1 = axs[0]
@@ -66,9 +71,10 @@ def plot_pca(data_dict, title="", axs=None):
     # ax1.set_ylabel('Cumulative EVR')
     ax1.set_title(f'order = {order:.2f} --- W PR = {W_PR:.2f} --- hidden PR = {hidden_pr:.2f}')
     ax1.set_ylim(-0.1, 1.1)
-
+    
     ax1 = axs[1]
-    s = ax1.scatter(X_reduced[:, 0], X_reduced[:, 1], c=loc_y, cmap='coolwarm', alpha=0.7)
+    for cor, marker in zip(np.unique(corridor), markers):
+        ax1.scatter(X_reduced[corridor==cor, 0], X_reduced[corridor==cor, 1], c=loc_y[corridor==cor], cmap='coolwarm', alpha=0.7, marker=marker)
     ax1.set_xlabel(f'Component 1')
     ax1.set_ylabel(f'Component 2'),
     ax1.axis('equal')
@@ -82,6 +88,10 @@ def plot_pca(data_dict, title="", axs=None):
     ax2.plot(accuracy_l, 'r')
     ax2.set_ylim(-0.1, 1.1)
     axs[3].set_title("Loss")
+
+    axs[4].imshow(hidden_dist[y.argmax(1).argsort()][:, y.argmax(1).argsort()], cmap='viridis')
+    axs[4].set_title('hidden distance matrix')
+    axs[4].grid(False)
 
     plt.tight_layout()
 

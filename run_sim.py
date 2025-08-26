@@ -8,6 +8,7 @@ from torch import nn, optim
 
 from model import DNN
 from tqdm import tqdm
+from data_modules import create_data
 
 # from utils import state_dict_to_theta, theta_to_state_dict
 
@@ -58,10 +59,6 @@ def theta_to_state_dict(theta, model_dict, shapes=None, sizes=None):
     new_model_dict = {k: v for k, v in zip(model_dict.keys(), W_l_new)}
     return new_model_dict
 
-def one_hot(x, num_classes):
-    return np.eye(num_classes)[x]
-
-
 use_gpu = True
 
 
@@ -79,13 +76,14 @@ class Config:
         self.whiten_data = False
         self.split_actions=True
         self.egocentric_movement=True
-        self.length_corridors=[30, 30]
+        self.length_corridors=[30]
         self.max_move= 15
         self.min_move=0
         self.input_size=100
         self.corridor_dim = 1
         self.input_smoothing = 0
         self.mask_states = None
+        self.data_geometry = 'euclidean'  # Options: 'euclidean', 'hyperbolic'
 
         # Model
         self.sig_h_2 = None
@@ -98,9 +96,9 @@ class Config:
 
         # Training
         self.early_stopping=False
-        self.learning_rate=0.00001
+        self.learning_rate=0.1
         self.num_epochs=10000
-        self.algo_name='ADAM'
+        self.algo_name='SGD'
         self.loss_fn=nn.CrossEntropyLoss()
         self.lambda_reg = 0
         self.B = 1
@@ -113,138 +111,6 @@ class Config:
         # Numerical precision settings
         self.use_high_precision = True  # Use float64 instead of float32
 
-class action_handler:
-    def __init__(self, C):
-        n_cors = len(C.length_corridors)
-        cor_dim = C.corridor_dim
-        cor_len = C.length_corridors[0]
-        N_inputs = sum([length ** cor_dim for length in C.length_corridors])
-        actions = np.concatenate([np.arange(-C.max_move, -C.min_move + 1), np.arange(C.min_move, C.max_move + 1)])
-        actions = np.unique(actions)
-        if C.allow_backwards:
-            run_actions = actions
-        else:
-            run_actions = actions[actions >= 0]
-        action_id = np.array(list(itertools.product(actions, range(cor_dim), range(1 + (n_cors-1) * int(C.split_actions))))).T
-        n_actions = action_id.shape[1]
-        if C.one_hot_actions:
-            actions_in = [one_hot(i, n_actions) for i in range(n_actions)]
-        else:
-            actions_in = [np.random.normal(0, 1, size=n_actions) for i in range(n_actions)]
-        self.actions_in =  actions_in
-        self.actions_id = action_id
-        self.n_actions = n_actions
-        self.run_actions = run_actions
-
-    def __call__(self, dim, cor_num, action, split_actions):
-        ind = np.where((self.actions_id[0] == action) &
-                       (self.actions_id[1] == dim) &
-                       (self.actions_id[2] == cor_num*split_actions))[0]
-        if len(ind) != 1:
-            raise ValueError(f"Action {action} found {len(ind)} times in action_id")
-        return self.actions_in[ind[0]]
-
-def recursive_indexing(l, indexes):
-    """
-    Recursively index a list of lists.
-    """
-    if len(indexes) == 1:
-        return l[indexes[0]]
-    else:
-        return recursive_indexing(l[indexes[0]], indexes[1:])
-
-def create_data(C):
-    n_cors = len(C.length_corridors)
-    cor_dim = C.corridor_dim
-    cor_len = C.length_corridors[0]
-    N_inputs = sum([length**cor_dim for length in C.length_corridors])
-    # actions = np.concatenate([np.arange(-C.max_move, -C.min_move+1), np.arange(C.min_move, C.max_move + 1)])
-    # actions = np.unique(actions)
-    # if C.allow_backwards:
-    #     run_actions = actions
-    # else:
-    #     run_actions = actions[actions >= 0]
-    # action_id = np.array(list(itertools.product(range(cor_dim), actions, range(n_cors*int(C.split_actions))))).T
-    # n_actions = action_id.shape[0]
-    # if C.one_hot_actions:
-    #     actions_in = [one_hot(i, n_actions) for i in range(n_actions)]
-    # else:
-    #     actions_in = [np.random.normal(0, 1, size=n_actions) for i in range(n_actions)]
-    action_h = action_handler(C)
-    run_actions = action_h.run_actions
-    n_actions = action_h.n_actions
-    if C.one_hot_inputs:
-        input_size = N_inputs
-        output_size = N_inputs
-        vecs = [[np.eye(input_size)[sum(C.length_corridors[:i]):sum(C.length_corridors[:i+1])] for _ in range(cor_dim)] for i in range(n_cors)]
-        vecs = np.eye(input_size).reshape([n_cors] + [cor_len]*cor_dim + [input_size])
-    else:
-        input_size = C.input_size
-        output_size = C.input_size
-        vecs = [gaussian_filter(np.random.normal(size=(C.length_corridors[i]*3, C.input_size)),
-                                sigma=C.length_corridors[i]*C.input_smoothing)[C.length_corridors[i]:-C.length_corridors[i]] for i in range(n_cors)]
-        vecs = [vecs[i] - vecs[i].mean(axis=0) for i in range(n_cors)]
-        vecs = [vec / vec.std() for vec in vecs]
-        # L_vec = gaussian_filter(np.random.normal(size=(C.length_corridors[0] * 3, C.input_size)), sigma=0)[C.length_corridors[0]:2 * C.length_corridors[0]]
-        # R_vec = gaussian_filter(np.random.normal(size=(C.length_corridors[1] * 3, C.input_size)), sigma=0)[C.length_corridors[1]:2 * C.length_corridors[1]]
-    positions = list(itertools.product(*[np.arange(cor_len)]*cor_dim))
-    X = []
-    y = []
-    loc_X = []
-    loc_y = []
-    corridor = []
-    action_taken = []
-    dim_l = []
-    for cor, vec in enumerate(vecs):
-        for loc in positions:
-            for dim in range(cor_dim):
-                for a in run_actions:
-                    if not C.egocentric_movement:
-                        a = a * (1 if cor == 0 else -1)
-                    # a_i = np.where(actions == a)[0][0]
-                    # a_i += (cor * int(C.split_actions) * (n_actions//n_cors))
-                    if (loc[dim] + a < 0) or (loc[dim] + a >= C.length_corridors[cor]) or (dim>0 and a==0):
-                        continue
-                    action_in = action_h(dim, cor, a, int(C.split_actions))
-                    v = recursive_indexing(vec, loc)
-                    next_loc = list(loc)
-                    next_loc[dim] += a
-                    if C.mask_states and any(
-                        tuple([loc[i] + (step if i == dim else 0) for i in range(len(loc))]) in C.mask_states
-                        for step in (range(0, a + 1) if a >= 0 else range(0, a - 1, -1))
-                    ):
-                        continue
-                    v_next = recursive_indexing(vec, next_loc)
-                    corridor.append(cor)
-                    dim_l.append(dim)
-                    loc_X.append(loc)
-                    loc_y.append(next_loc)
-                    X.append(np.concatenate([v, action_in]))
-                    y.append(v_next)
-                    action_taken.append(a)
-    X = np.array(X)
-    y = np.array(y)
-    if not C.one_hot_inputs:
-        X[:, :input_size] /= X[:, :input_size].std()
-        y[:, :output_size] /= y[:, :output_size].std()
-    corridor = np.array(corridor)
-    loc_X = np.array(loc_X)
-    loc_y = np.array(loc_y)
-    action_taken = np.array(action_taken)
-    if C.egocentric_movement and C.corridor_dim == 1:
-        loc_y[corridor == 1] = max(loc_y) - loc_y[corridor == 1]
-        loc_y[corridor == 0] = min(loc_y) + loc_y[corridor == 0]
-
-    if C.whiten_data:
-        pca = PCA(whiten=True)
-        X = pca.fit_transform(X)
-
-    if C.print_progress:
-        print(f'Number of samples: {X.shape[0]}')
-        print(f'Input dimension: {X.shape[1]}')
-        print(f'Output dimension: {y.shape[1]}')
-        print(f'Number of actions: {n_actions}\n')
-    return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
 
 
 def train_model(C: Config, X, y, model, action_taken):

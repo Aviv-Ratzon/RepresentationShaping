@@ -1,4 +1,5 @@
 from itertools import product
+import ipynbname
 from functools import reduce
 import os
 import numpy as np
@@ -674,3 +675,17 @@ def multiclass_functional_margin(W, X, y, reducer=np.min):
         margins.append(true_score - max_other_score)
         i_max_other_score_l.append(i_max_other_score)
     return reducer(margins), np.argmin(margins), i_max_other_score_l[np.argmin(margins)]
+
+
+def get_notebook_name():
+    """
+    Returns the notebook name (without extension) and full path if running inside a Jupyter notebook.
+    If not running inside a notebook, returns (None, None).
+    """
+    try:
+        name = ipynbname.name()       # notebook name without extension
+        path = ipynbname.path()       # full path
+        return name
+    except Exception:
+        # Handles FileNotFoundError and also if ipynbname is not available
+        return None
