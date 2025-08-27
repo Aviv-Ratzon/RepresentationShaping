@@ -54,7 +54,7 @@ DEFAULT_BASE_PARAMS = {
     'loss_fn': nn.CrossEntropyLoss(),
     'L': 1,
     'corridor_dim': 1,
-    'max_move': 15,
+    'max_move': 5,
 }
 
 def get_config_from_args():
