@@ -36,7 +36,7 @@ def plot_pca(data_dict, title="", axs=None):
     hidden_states = data_dict['hidden_states']
     action_taken = data_dict['action_taken']
     loss_l = data_dict['loss_l']; accuracy_l = data_dict['accuracy_l']
-    y = data_dict['y']
+    y = data_dict['y'].cpu().numpy()
     C = data_dict['C']
     corridor = data_dict['corridor']
     X_np = data_dict['X'].cpu().numpy()

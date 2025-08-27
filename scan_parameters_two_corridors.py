@@ -249,7 +249,16 @@ if __name__ == "__main__":
     # Your main function code here
     start_time = time.time()
     print('Started parameter sweep.....')
-    if not os.path.isdir(result_path):
+    if os.path.isdir(result_path):
+        # Remove all files in the directory
+        for filename in os.listdir(result_path):
+            file_path = os.path.join(result_path, filename)
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.remove(file_path)
+            elif os.path.isdir(file_path):
+                import shutil
+                shutil.rmtree(file_path)
+    else:
         os.makedirs(result_path)
     if run_type == 'single_var':
         args_list = get_args_list_single_var(num_seeds, modify_vars, base_params, gpu_ids)
