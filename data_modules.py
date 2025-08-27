@@ -22,8 +22,6 @@ class action_handler:
     def __init__(self, C):
         n_cors = len(C.length_corridors)
         cor_dim = C.corridor_dim
-        cor_len = C.length_corridors[0]
-        N_inputs = sum([length ** cor_dim for length in C.length_corridors])
         actions = np.concatenate([np.arange(-C.max_move, -C.min_move + 1), np.arange(C.min_move, C.max_move + 1)])
         actions = np.unique(actions)
         if C.allow_backwards:
@@ -109,7 +107,6 @@ class action_handler_hyper:
     def __init__(self, C):
         n_cors = len(C.length_corridors)
         n_branches = C.corridor_dim
-        cor_len = C.length_corridors[0]
         actions = np.concatenate([np.arange(-C.max_move, -C.min_move + 1), np.arange(C.min_move, C.max_move + 1)])
         actions = np.unique(actions)
         if C.allow_backwards:
@@ -173,7 +170,7 @@ def create_data_euclidean(C):
     if C.one_hot_inputs:
         input_size = N_inputs
         output_size = N_inputs
-        vecs = [[np.eye(input_size)[sum(C.length_corridors[:i]):sum(C.length_corridors[:i+1])] for _ in range(cor_dim)] for i in range(n_cors)]
+        # vecs = [[np.eye(input_size)[sum(C.length_corridors[:i]):sum(C.length_corridors[:i+1])] for _ in range(cor_dim)] for i in range(n_cors)]
         vecs = np.eye(input_size).reshape([n_cors] + [cor_len]*cor_dim + [input_size])
     else:
         input_size = C.input_size

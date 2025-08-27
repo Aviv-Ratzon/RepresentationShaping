@@ -52,6 +52,7 @@ def plot_pca(data_dict, title="", axs=None):
         if C.L == 0:
             U, S, V = np.linalg.svd(W_effective, full_matrices=False)
             hidden = X_np @ U @ np.diag(S)
+            hidden_dist = torch.cdist(torch.tensor(hidden), torch.tensor(hidden)).cpu().numpy()
     else:
         W_PR = 0
     hidden_pr = calc_PR(hidden)

@@ -17,30 +17,31 @@ from torch.nn import MSELoss
 from run_sim import *
 from utils import *
 
+
 num_seeds = 10
-num_workers = 8
+num_workers = 4
 gpu_ids = np.arange(8)
 use_gpu = True
 debug = False
-result_path = './results/sweep_results_linear/max_move_sweep_layers_1_L_20'
+result_path = './results/sweep_results_linear/two_corridors_S_11_L_5'
 run_type = 'single_var' #'all_combs'
 modify_vars = {
     # 'G': np.arange(.5,1.1,0.1),
-    'max_move': np.arange(0, 20),
+    'max_move': np.arange(0, 11),
 }
 base_params = {
 
     'linear_net': True,
     'G': 1,
     'sig_2_h': None,
-    'learning_rate': .1,
-    'length_corridors': [20]*1,
-    'hidden_size': 61,
-    'num_epochs': 100000,
+    'learning_rate': .01,
+    'length_corridors': [10]*2,
+    'hidden_size': 33,
+    'num_epochs': 10000,
     'algo_name': 'SGD',
 
     'loss_fn': nn.CrossEntropyLoss(),
-    'L': 1,
+    'L': 5,
     'corridor_dim': 1,
     'max_move': 15,
 }
@@ -140,12 +141,12 @@ def worker_function(args):
     start_time = args[3]
     data_dict_l = args[4]
     result = run_scenario(config_data)
-    with counter_lock:
-        counter.value += 1
-        elapsed_time = (time.time() - start_time) / 60
-        total_time = elapsed_time * (num_runs / counter.value)
-        time_per_iter = elapsed_time / counter.value
-        print(f"Completed {counter.value}/{num_runs} runs --- running time {elapsed_time:.2f} / {total_time:.2f} minutes --- {time_per_iter:.2f} min/iter")
+    # with counter_lock:
+    #     counter.value += 1
+    #     elapsed_time = (time.time() - start_time) / 60
+    #     total_time = elapsed_time * (num_runs / counter.value)
+    #     time_per_iter = elapsed_time / counter.value
+    #     print(f"Completed {counter.value}/{num_runs} runs --- running time {elapsed_time:.2f} / {total_time:.2f} minutes --- {time_per_iter:.2f} min/iter")
 
     if result is not None:
         file_name = f'{result_path}/{run_name}.csv'
@@ -182,6 +183,7 @@ def get_args_list_all_combs():
     return args_list
 
 if __name__ == "__main__":
+    print("Starting time:", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
     # Your main function code here
     start_time = time.time()
     print('Started parameter sweep.....')
@@ -215,3 +217,5 @@ if __name__ == "__main__":
         pkl.dump(data_dict_l, f)
 
     print(f'Total run time: {(time.time() - start_time)/60:.2f} minutes')
+
+    print("Ending time:", time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))

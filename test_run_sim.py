@@ -4,14 +4,14 @@ from run_sim import *
 C = Config()
 
 C.seed = 0
-C.data_geometry = 'hyperbolic'
+# C.data_geometry = 'hyperbolic'
 C.G = 0.5
 C.linear_net = False
 C.corridor_dim = 2
 C.learning_rate = 0.1
 C.L=1
 C.print_progress = True
-C.length_corridors = [[2,5]]*1
+C.length_corridors = [5]*1
 C.max_move = 1
 C.hidden_size = 100
 C.num_epochs = 10000
