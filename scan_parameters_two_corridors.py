@@ -30,14 +30,14 @@ def parse_value(val):
 
 def get_arg_parser():
     parser = argparse.ArgumentParser(description="Parameter sweep for two corridors experiment")
-    parser.add_argument('--num_seeds', type=int, default=10, help='Number of seeds')
-    parser.add_argument('--num_workers', type=int, default=4, help='Number of workers')
+    parser.add_argument('--num_seeds', type=int, default=2, help='Number of seeds')
+    parser.add_argument('--num_workers', type=int, default=8, help='Number of workers')
     parser.add_argument('--gpu_ids', type=str, default='0,1,2,3,4,5,6,7', help='Comma separated list of GPU ids')
     parser.add_argument('--use_gpu', type=lambda x: x.lower() == 'true', default=True, help='Use GPU (True/False)')
-    parser.add_argument('--debug', type=lambda x: x.lower() == 'true', default=False, help='Debug mode (True/False)')
+    parser.add_argument('--debug', type=lambda x: x.lower() == 'true', default=True, help='Debug mode (True/False)')
     parser.add_argument('--result_path', type=str, default='./results/sweep_results_linear/two_corridors_S_11_L_5', help='Path to save results')
     parser.add_argument('--run_type', type=str, default='single_var', choices=['single_var', 'all_combs'], help='Type of run')
-    parser.add_argument('--modify_vars', type=str, default="{'max_move': np.arange(0, 11)}", help='Dictionary of variables to modify (as python dict string)')
+    parser.add_argument('--modify_vars', type=str, default="{'max_move': np.arange(1, 11)}", help='Dictionary of variables to modify (as python dict string)')
     parser.add_argument('--base_params', type=str, default=None, help='Base params as python dict string (overrides defaults)')
     return parser
 
@@ -46,13 +46,13 @@ DEFAULT_BASE_PARAMS = {
     'linear_net': True,
     'G': 1,
     'sig_2_h': None,
-    'learning_rate': .01,
-    'length_corridors': [10]*2,
+    'learning_rate': .1,
+    'length_corridors': [11]*2,
     'hidden_size': 33,
-    'num_epochs': 10000,
+    'num_epochs': 100000,
     'algo_name': 'SGD',
     'loss_fn': nn.CrossEntropyLoss(),
-    'L': 5,
+    'L': 1,
     'corridor_dim': 1,
     'max_move': 15,
 }
@@ -121,7 +121,10 @@ def run_scenario(config_data):
     accuracy_l = data_dict['accuracy_l']
     loc_y = data_dict['loc_y']
     y = data_dict['y']
+    labels = y.cpu().numpy().argmax(1)
+    action_taken = data_dict['action_taken']
     X = data_dict['X']
+    X_np = X.cpu().numpy()
     ########
     device = torch.device(f"cuda:{C.gpu_id}" if torch.cuda.is_available() and use_gpu else "cpu")
     hidden_tensor = torch.tensor(hidden, dtype=torch.float32, device=device)
@@ -168,6 +171,11 @@ def run_scenario(config_data):
     results['res_cluster_collapse_norm_size'] = hidden_within_cluster_dists / hidden_mean_norm
 
     results['res_NC1'] = calc_NC1(hidden_tensor.cpu().numpy(), y.cpu().numpy().argmax(1))
+
+    W = get_effective_W_from_model_dict(data_dict['final_weights']).cpu().numpy()
+    margins = multiclass_functional_margin(W, X_np[abs(action_taken)<1], labels[abs(action_taken)<1], reducer=np.array)[0]
+    results['res_min_margins'] = margins.min()
+    results['res_min_margins_per_class'] = np.mean([margins[labels[abs(action_taken)<1]==c].min() for c in np.unique(labels)])
 
     # Create a dictionary with the config values and results
     results = {
