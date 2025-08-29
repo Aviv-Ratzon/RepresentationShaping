@@ -379,13 +379,13 @@ def create_data_arm(C):
     corridor = np.zeros(C.num_samples, dtype=int)  # All samples are from "corridor" 0
     loc_X = np.column_stack([elbow_x_init, elbow_y_init, wrist_x_init, wrist_y_init, theta_init, phi_init])
     loc_y = np.column_stack([elbow_x_final, elbow_y_final, wrist_x_final, wrist_y_final, theta_final, phi_final])
-    action_taken = np.column_stack([delta_theta, delta_phi])
+    action_taken = np.column_stack([delta_theta.sum(-1), delta_phi.sum(-1)])
     dim_l = np.zeros(C.num_samples, dtype=int)  # Dummy dimension labels
     
     # Set sizes for compatibility
     input_size = 4   # 6 features: [elbow_x, elbow_y, wrist_x, wrist_y, delta_theta, delta_phi]
     output_size = 4  # 4 features: [elbow_x, elbow_y, wrist_x, wrist_y]
-    n_actions = 2  # Not really applicable for this dataset, but kept for compatibility
+    n_actions = 2*C.max_move  # Not really applicable for this dataset, but kept for compatibility
     
     if C.print_progress:
         print(f'Arm Dataset:')

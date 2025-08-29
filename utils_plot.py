@@ -14,7 +14,7 @@ def plot_loss_and_dist(data_dict):
     X_dist = torch.cdist(X, X).cpu().numpy()
     y_dist = torch.cdist(y, y).cpu().numpy()
     hidden_dist = torch.cdist(hidden_states[-1].detach(), hidden_states[-1].detach()).cpu().numpy()
-    indices = np.lexsort((loc_y, corridor))
+    indices = y.argmax(1).argsort()
     # indices = indices[action_taken[indices]==0]
     fig, axs = plt.subplots(2, 3, figsize=(15/2, 10/2))
     axs[0, 0].set_axis_off();
