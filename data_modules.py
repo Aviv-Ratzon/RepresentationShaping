@@ -315,10 +315,95 @@ def create_data_hyperbolic(C):
     return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
 
 
+def create_data_arm(C):
+    """
+    Create data for a robotic arm with elbow and wrist positions.
+    The arm has two segments: shoulder to elbow, and elbow to wrist.
+    Latent variables are theta (shoulder angle) and phi (elbow angle).
+    """
+    # Set default parameters if not provided
+    if not hasattr(C, 'arm_length_1'):
+        C.arm_length_1 = 1.0  # Length of first segment (shoulder to elbow)
+    if not hasattr(C, 'arm_length_2'):
+        C.arm_length_2 = 1.0  # Length of second segment (elbow to wrist)
+    if not hasattr(C, 'num_samples'):
+        C.num_samples = 1000  # Number of samples to generate
+    if not hasattr(C, 'angle_range'):
+        C.angle_range = np.pi/10  # Range for angle changes (default: π radians)
+    if not hasattr(C, 'noise_std'):
+        C.noise_std = 0.01  # Standard deviation of noise to add
+    
+    # Generate random initial angles
+    theta_init = np.random.uniform(0, 2*np.pi, C.num_samples)  # Initial shoulder angle
+    phi_init = np.random.uniform(0, 2*np.pi, C.num_samples)    # Initial elbow angle
+    
+    # Generate random angle changes
+    delta_theta = np.random.uniform(-C.angle_range, C.max_move, [C.num_samples, C.max_move])
+    delta_phi = np.random.uniform(-C.angle_range, C.max_move, [C.num_samples, C.max_move])
+    
+    # Calculate initial positions
+    # Elbow position
+    elbow_x_init = C.arm_length_1 * np.cos(theta_init)
+    elbow_y_init = C.arm_length_1 * np.sin(theta_init)
+    
+    # Wrist position
+    wrist_x_init = elbow_x_init + C.arm_length_2 * np.cos(theta_init + phi_init)
+    wrist_y_init = elbow_y_init + C.arm_length_2 * np.sin(theta_init + phi_init)
+    
+    # Calculate final positions
+    theta_final = theta_init + delta_theta.sum(-1)
+    phi_final = phi_init + delta_phi.sum(-1)
+    
+    # Final elbow position
+    elbow_x_final = C.arm_length_1 * np.cos(theta_final)
+    elbow_y_final = C.arm_length_1 * np.sin(theta_final)
+    
+    # Final wrist position
+    wrist_x_final = elbow_x_final + C.arm_length_2 * np.cos(theta_final + phi_final)
+    wrist_y_final = elbow_y_final + C.arm_length_2 * np.sin(theta_final + phi_final)
+    
+    # Create input features: [elbow_x, elbow_y, wrist_x, wrist_y, delta_theta, delta_phi]
+    X = np.column_stack([
+        elbow_x_init, elbow_y_init, 
+        wrist_x_init, wrist_y_init, 
+        delta_theta, delta_phi
+    ])
+    
+    # Create target features: [elbow_x_final, elbow_y_final, wrist_x_final, wrist_y_final]
+    y = np.column_stack([
+        elbow_x_final, elbow_y_final, 
+        wrist_x_final, wrist_y_final
+    ])
+    
+    # Create dummy arrays for compatibility with existing interface
+    corridor = np.zeros(C.num_samples, dtype=int)  # All samples are from "corridor" 0
+    loc_X = np.column_stack([elbow_x_init, elbow_y_init, wrist_x_init, wrist_y_init, theta_init, phi_init])
+    loc_y = np.column_stack([elbow_x_final, elbow_y_final, wrist_x_final, wrist_y_final, theta_final, phi_final])
+    action_taken = np.column_stack([delta_theta, delta_phi])
+    dim_l = np.zeros(C.num_samples, dtype=int)  # Dummy dimension labels
+    
+    # Set sizes for compatibility
+    input_size = 4   # 6 features: [elbow_x, elbow_y, wrist_x, wrist_y, delta_theta, delta_phi]
+    output_size = 4  # 4 features: [elbow_x, elbow_y, wrist_x, wrist_y]
+    n_actions = 2  # Not really applicable for this dataset, but kept for compatibility
+    
+    if C.print_progress:
+        print(f'Arm Dataset:')
+        print(f'Number of samples: {X.shape[0]}')
+        print(f'Input dimension: {X.shape[1]} (elbow_x, elbow_y, wrist_x, wrist_y, delta_theta, delta_phi)')
+        print(f'Output dimension: {y.shape[1]} (elbow_x, elbow_y, wrist_x, wrist_y)')
+        print(f'Arm lengths: {C.arm_length_1}, {C.arm_length_2}')
+        print(f'Angle range: ±{C.angle_range:.2f} radians')
+        print(f'Noise std: {C.noise_std}\n')
+    
+    return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
+
+
 # Dictionary mapping data geometry types to their corresponding create_data functions
 DATA_GEOMETRY_FUNCTIONS = {
     'euclidean': create_data_euclidean,
     'hyperbolic': create_data_hyperbolic,
+    'arm': create_data_arm,
 }
 
 
