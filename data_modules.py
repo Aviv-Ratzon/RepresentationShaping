@@ -330,8 +330,6 @@ def create_data_arm(C):
         C.num_samples = 1000  # Number of samples to generate
     if not hasattr(C, 'angle_range'):
         C.angle_range = np.pi/10  # Range for angle changes (default: π radians)
-    if not hasattr(C, 'noise_std'):
-        C.noise_std = 0.01  # Standard deviation of noise to add
     
     # Generate random initial angles
     theta_init = np.random.uniform(0, 2*np.pi, C.num_samples)  # Initial shoulder angle
@@ -387,14 +385,6 @@ def create_data_arm(C):
     output_size = 4  # 4 features: [elbow_x, elbow_y, wrist_x, wrist_y]
     n_actions = 2*C.max_move  # Not really applicable for this dataset, but kept for compatibility
     
-    if C.print_progress:
-        print(f'Arm Dataset:')
-        print(f'Number of samples: {X.shape[0]}')
-        print(f'Input dimension: {X.shape[1]} (elbow_x, elbow_y, wrist_x, wrist_y, delta_theta, delta_phi)')
-        print(f'Output dimension: {y.shape[1]} (elbow_x, elbow_y, wrist_x, wrist_y)')
-        print(f'Arm lengths: {C.arm_length_1}, {C.arm_length_2}')
-        print(f'Angle range: ±{C.angle_range:.2f} radians')
-        print(f'Noise std: {C.noise_std}\n')
     
     return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
 
