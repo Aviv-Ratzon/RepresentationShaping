@@ -403,12 +403,22 @@ def create_data_non_linear_fn(C):
         C.function_dim = 10  # Dimensionality of the non-linear function f(s)
     if not hasattr(C, 's_range'):
         C.s_range = (-1.0, 1.0)  # Range for the parameter s
+    if not hasattr(C, 'discrete_samples'):
+        C.discrete_samples = False  # Range for the parameter s
     
     # Generate random parameter values s
-    s_values = np.random.uniform(C.s_range[0], C.s_range[1], C.num_samples)
+    if C.discrete_samples:
+        s_values = np.linspace(C.s_range[0], C.s_range[1], C.num_samples)
+        actions = np.arange(-C.max_move, C.max_move + 0.0001, np.diff(s_values).mean())
+        # Create all combinations of s_values and actions
+        s_grid, a_grid = np.meshgrid(s_values, actions, indexing='ij')
+        s_values = s_grid.ravel()
+        actions = a_grid.ravel()
+    else:
+        s_values = np.random.uniform(C.s_range[0], C.s_range[1], C.num_samples)
+        actions = np.random.uniform(-C.max_move, C.max_move, C.num_samples)
     
     # Generate random actions a in the range [-C.max_move, C.max_move]
-    actions = np.random.uniform(-C.max_move, C.max_move, C.num_samples)
 
     # Remove samples where s_values + actions are outside of s_range
     s_plus_a = s_values + actions
