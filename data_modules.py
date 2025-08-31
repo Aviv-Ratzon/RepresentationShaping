@@ -402,33 +402,51 @@ def create_data_non_linear_fn(C):
     if not hasattr(C, 'function_dim'):
         C.function_dim = 10  # Dimensionality of the non-linear function f(s)
     if not hasattr(C, 's_range'):
-        C.s_range = (-5.0, 5.0)  # Range for the parameter s
+        C.s_range = (-1.0, 1.0)  # Range for the parameter s
     
     # Generate random parameter values s
     s_values = np.random.uniform(C.s_range[0], C.s_range[1], C.num_samples)
     
     # Generate random actions a in the range [-C.max_move, C.max_move]
     actions = np.random.uniform(-C.max_move, C.max_move, C.num_samples)
+
+    # Remove samples where s_values + actions are outside of s_range
+    s_plus_a = s_values + actions
+    valid_mask = (s_plus_a >= C.s_range[0]) & (s_plus_a <= C.s_range[1])
+    s_values = s_values[valid_mask]
+    actions = actions[valid_mask]
     
     # Define a non-linear function f(s) - using a combination of trigonometric and polynomial functions
     def non_linear_function(s):
         # Create a D-dimensional output with non-linear transformations
         result = np.zeros((len(s), C.function_dim))
-        
+        # For each dimension, create a random polynomial of degree C.function_dim
+        # The coefficients are sampled randomly for each dimension
+        # Store the coefficients for reproducibility
+        if not hasattr(C, '_poly_coeffs'):
+            # Generate and store coefficients: shape (C.function_dim, C.function_dim + 1)
+            C._poly_coeffs = np.random.randn(C.function_dim, C.function_dim + 1)
+        coeffs = C._poly_coeffs  # shape: (function_dim, degree+1)
+        # For each dimension, evaluate the polynomial at all s
         for i in range(C.function_dim):
-            # Different non-linear transformations for each dimension
-            if i % 4 == 0:
-                # Sine function with different frequencies
-                result[:, i] = np.sin(s * (1 + i * 0.5))
-            elif i % 4 == 1:
-                # Cosine function with different frequencies
-                result[:, i] = np.cos(s * (1 + i * 0.3))
-            elif i % 4 == 2:
-                # Polynomial function
-                result[:, i] = s**2 + i * s + 1
-            else:
-                # Exponential function
-                result[:, i] = np.exp(-s**2 / (2 + i))
+            # np.polyval expects highest degree first
+            result[:, i] = np.polyval(coeffs[i], s)
+        # for i in range(C.function_dim):
+        #     # # result[:, i] = np.exp(s)
+        #     result[:, i] = float(i-s)
+            # # Different non-linear transformations for each dimension
+            # if i % 4 == 0:
+            #     # Sine function with different frequencies
+            #     result[:, i] = np.sin(s * (1 + i * 0.5))
+            # elif i % 4 == 1:
+            #     # Cosine function with different frequencies
+            #     result[:, i] = np.cos(s * (1 + i * 0.3))
+            # elif i % 4 == 2:
+            #     # Polynomial function
+            #     result[:, i] = s**2 + i * s + 1
+            # else:
+            #     # Exponential function
+            #     result[:, i] = np.exp(-s**2 / (2 + i))
         
         return result
     
@@ -447,11 +465,11 @@ def create_data_non_linear_fn(C):
     y = f_s_plus_a
     
     # Create dummy arrays for compatibility with existing interface
-    corridor = np.zeros(C.num_samples, dtype=int)  # All samples are from "corridor" 0
+    corridor = np.zeros(len(s_values), dtype=int)  # All samples are from "corridor" 0
     loc_X = np.column_stack([s_values, actions])
     loc_y = np.column_stack([s_values + actions])
     action_taken = actions
-    dim_l = np.zeros(C.num_samples, dtype=int)  # Dummy dimension labels
+    dim_l = np.zeros(len(s_values), dtype=int)  # Dummy dimension labels
     
     # Set sizes for compatibility
     input_size = C.function_dim  # f(s) + action a
