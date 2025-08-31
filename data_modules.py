@@ -396,6 +396,7 @@ def create_data_non_linear_fn(C):
     and a is a scalar in the range [-C.max_move, C.max_move].
     y is f(s+a).
     """
+    np.random.seed(C.seed)
     # Set default parameters if not provided
     if not hasattr(C, 'num_samples'):
         C.num_samples = 1000  # Number of samples to generate
