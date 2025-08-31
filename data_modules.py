@@ -389,11 +389,93 @@ def create_data_arm(C):
     return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
 
 
+def create_data_non_linear_fn(C):
+    """
+    Create data for a non-linear function learning task.
+    X is tuples [f(s), a] where f is a D-dimensional non-linear function parametrized by a scalar s,
+    and a is a scalar in the range [-C.max_move, C.max_move].
+    y is f(s+a).
+    """
+    # Set default parameters if not provided
+    if not hasattr(C, 'num_samples'):
+        C.num_samples = 1000  # Number of samples to generate
+    if not hasattr(C, 'function_dim'):
+        C.function_dim = 10  # Dimensionality of the non-linear function f(s)
+    if not hasattr(C, 's_range'):
+        C.s_range = (-5.0, 5.0)  # Range for the parameter s
+    
+    # Generate random parameter values s
+    s_values = np.random.uniform(C.s_range[0], C.s_range[1], C.num_samples)
+    
+    # Generate random actions a in the range [-C.max_move, C.max_move]
+    actions = np.random.uniform(-C.max_move, C.max_move, C.num_samples)
+    
+    # Define a non-linear function f(s) - using a combination of trigonometric and polynomial functions
+    def non_linear_function(s):
+        # Create a D-dimensional output with non-linear transformations
+        result = np.zeros((len(s), C.function_dim))
+        
+        for i in range(C.function_dim):
+            # Different non-linear transformations for each dimension
+            if i % 4 == 0:
+                # Sine function with different frequencies
+                result[:, i] = np.sin(s * (1 + i * 0.5))
+            elif i % 4 == 1:
+                # Cosine function with different frequencies
+                result[:, i] = np.cos(s * (1 + i * 0.3))
+            elif i % 4 == 2:
+                # Polynomial function
+                result[:, i] = s**2 + i * s + 1
+            else:
+                # Exponential function
+                result[:, i] = np.exp(-s**2 / (2 + i))
+        
+        return result
+    
+    # Calculate function values at s
+    f_s = non_linear_function(s_values)
+    
+    # Calculate function values at s + a
+    f_s_plus_a = non_linear_function(s_values + actions)
+    
+    # Create input features: [f(s), a]
+    # Reshape actions to be a column vector for concatenation
+    actions_reshaped = actions.reshape(-1, 1)
+    X = np.concatenate([f_s, actions_reshaped], axis=1)
+    
+    # Create target features: f(s+a)
+    y = f_s_plus_a
+    
+    # Create dummy arrays for compatibility with existing interface
+    corridor = np.zeros(C.num_samples, dtype=int)  # All samples are from "corridor" 0
+    loc_X = np.column_stack([s_values, actions])
+    loc_y = np.column_stack([s_values + actions])
+    action_taken = actions
+    dim_l = np.zeros(C.num_samples, dtype=int)  # Dummy dimension labels
+    
+    # Set sizes for compatibility
+    input_size = C.function_dim  # f(s) + action a
+    output_size = C.function_dim      # f(s+a)
+    n_actions = 1   # Number of possible action values
+    
+    if C.print_progress:
+        print(f'Number of samples: {X.shape[0]}')
+        print(f'Input dimension: {X.shape[1]}')
+        print(f'Output dimension: {y.shape[1]}')
+        print(f'Function dimension: {C.function_dim}')
+        print(f'Action range: [-{C.max_move}, {C.max_move}]')
+        print(f'Parameter s range: {C.s_range}')
+        print(f'Number of actions: {n_actions}\n')
+    
+    return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
+
+
 # Dictionary mapping data geometry types to their corresponding create_data functions
 DATA_GEOMETRY_FUNCTIONS = {
     'euclidean': create_data_euclidean,
     'hyperbolic': create_data_hyperbolic,
     'arm': create_data_arm,
+    'non_linear_fn': create_data_non_linear_fn,
 }
 
 
