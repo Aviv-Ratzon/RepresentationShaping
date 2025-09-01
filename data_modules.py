@@ -593,7 +593,7 @@ def create_data_mnist(C):
     loc_y = labels
     action_taken = actions
     dim_l = np.zeros(X.shape[0], dtype=int)
-    action_dim = action_in.shape[1]
+    action_dim = actions_in.shape[1]
 
     input_size = images.shape[1]  # 784
     output_size = images.shape[1]
