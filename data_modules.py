@@ -438,7 +438,7 @@ def create_data_non_linear_fn(C):
         # Store the coefficients for reproducibility
         if not hasattr(C, '_poly_coeffs'):
             # Generate and store coefficients: shape (C.function_dim, C.function_dim + 1)
-            C._poly_coeffs = np.random.randn(C.function_dim, poly_degree)*0.1
+            C._poly_coeffs = np.random.randn(C.function_dim, C.poly_degree)*0.1
         coeffs = C._poly_coeffs  # shape: (function_dim, degree+1)
         # For each dimension, evaluate the polynomial at all s
         for i in range(C.function_dim):
