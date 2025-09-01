@@ -572,7 +572,7 @@ def create_data_mnist(C):
     dim_l = np.zeros(images.shape[0], dtype=int)
 
     input_size = images.shape[1]  # 784
-    output_size = 10
+    output_size = images.shape[1]
 
     if C.whiten_data:
         pca = PCA(whiten=True)
