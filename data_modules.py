@@ -406,6 +406,8 @@ def create_data_non_linear_fn(C):
         C.s_range = (-1.0, 1.0)  # Range for the parameter s
     if not hasattr(C, 'discrete_samples'):
         C.discrete_samples = False  # Range for the parameter s
+    if not hasattr(C, 'poly_degree'):
+        C.poly_degree = 10  # Range for the parameter s
     
     # Generate random parameter values s
     if C.discrete_samples:
@@ -436,7 +438,7 @@ def create_data_non_linear_fn(C):
         # Store the coefficients for reproducibility
         if not hasattr(C, '_poly_coeffs'):
             # Generate and store coefficients: shape (C.function_dim, C.function_dim + 1)
-            C._poly_coeffs = np.random.randn(C.function_dim, 50)*0.001
+            C._poly_coeffs = np.random.randn(C.function_dim, poly_degree)*0.1
         coeffs = C._poly_coeffs  # shape: (function_dim, degree+1)
         # For each dimension, evaluate the polynomial at all s
         for i in range(C.function_dim):
