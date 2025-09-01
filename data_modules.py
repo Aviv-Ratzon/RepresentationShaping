@@ -593,6 +593,7 @@ def create_data_mnist(C):
     loc_y = labels
     action_taken = actions
     dim_l = np.zeros(X.shape[0], dtype=int)
+    action_dim = action_in.shape[1]
 
     input_size = images.shape[1]  # 784
     output_size = images.shape[1]
@@ -607,7 +608,7 @@ def create_data_mnist(C):
         print(f'Output dimension: {y.shape[1]} (10 classes)')
         print(f'Number of actions: {n_actions}')
 
-    return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
+    return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, action_dim
 
 
 # Dictionary mapping data geometry types to their corresponding create_data functions
