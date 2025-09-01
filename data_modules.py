@@ -2,6 +2,7 @@ import itertools
 import numpy as np
 from sklearn.decomposition import PCA
 from scipy.ndimage import gaussian_filter
+from sklearn.datasets import fetch_openml
 
 
 def one_hot(x, num_classes):
@@ -396,7 +397,6 @@ def create_data_non_linear_fn(C):
     and a is a scalar in the range [-C.max_move, C.max_move].
     y is f(s+a).
     """
-    np.random.seed(C.seed)
     # Set default parameters if not provided
     if not hasattr(C, 'num_samples'):
         C.num_samples = 1000  # Number of samples to generate
@@ -501,16 +501,105 @@ def create_data_non_linear_fn(C):
     return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
 
 
+def create_data_mnist(C):
+    """
+    Create data for MNIST with discrete actions. Each sample:
+    - Observation: image of a digit (flattened)
+    - Action: integer in [-C.max_move, C.max_move]
+    - Target: one-hot of class (label + action) mod 10
+    """
+    if not hasattr(C, 'num_samples'):
+        C.num_samples = 10000
+    if not hasattr(C, 'one_hot_actions'):
+        C.one_hot_actions = True
+    if not hasattr(C, 'allow_backwards'):
+        C.allow_backwards = True
+    if not hasattr(C, 'whiten_data'):
+        C.whiten_data = False
+    if not hasattr(C, 'seed'):
+        C.seed = 0
+
+    # Load MNIST (70k samples, 28x28 flattened to 784)
+    mnist = fetch_openml('mnist_784', version=1, as_frame=False)
+    images = mnist.data.astype(np.float32) / 255.0
+    labels = mnist.target.astype(np.int64)
+
+    # Sample subset
+    rng = np.random.default_rng(C.seed)
+    idx = rng.choice(images.shape[0], size=min(C.num_samples, images.shape[0]), replace=False)
+    images = images[idx]
+    labels = labels[idx]
+
+    # Build discrete action space and sample actions
+    max_move_int = int(C.max_move)
+    action_space = np.arange(-max_move_int, max_move_int + 1, 1, dtype=int)
+    n_actions = len(action_space)
+    action_indices = rng.integers(0, n_actions, size=images.shape[0])
+    actions = action_space[action_indices]
+    keep_samples = ((actions+labels) >= min(labels)) & ((actions+labels) <= max(labels))
+    images = images[keep_samples]
+    labels = labels[keep_samples]
+    actions = actions[keep_samples]
+
+    # Encode actions
+    if C.one_hot_actions:
+        action_in = np.eye(n_actions, dtype=np.float32)[action_indices]
+    else:
+        # Random but fixed embedding per action
+        rng_embed = np.random.default_rng(0)
+        action_embeddings = rng_embed.normal(0, 1, size=(n_actions, n_actions)).astype(np.float32)
+        action_in = action_embeddings[action_indices]
+
+    # Targets: MNIST images from the resulting class (shifted labels mod 10)
+    new_labels = (labels + actions) % 10
+    # For each new label, randomly select an image from the dataset with that label
+    y = np.zeros_like(images)
+    for i, lbl in enumerate(new_labels):
+        # Find indices of all images with the desired label
+        candidates = np.where(labels == lbl)[0]
+        # Randomly select one candidate (using rng for reproducibility)
+        chosen_idx = rng.choice(candidates)
+        y[i] = images[chosen_idx]
+
+    # Inputs: [image, action encoding]
+    X = np.concatenate([images, action_in], axis=1).astype(np.float32)
+
+    # Meta fields matching interface
+    corridor = np.zeros(images.shape[0], dtype=int)
+    loc_X = np.column_stack([labels, actions])
+    loc_y = new_labels
+    action_taken = actions
+    dim_l = np.zeros(images.shape[0], dtype=int)
+
+    input_size = images.shape[1]  # 784
+    output_size = 10
+
+    if C.whiten_data:
+        pca = PCA(whiten=True)
+        X = pca.fit_transform(X)
+
+    if getattr(C, 'print_progress', False):
+        print(f'Number of samples: {X.shape[0]}')
+        print(f'Input dimension: {X.shape[1]} (image {input_size} + action {n_actions})')
+        print(f'Output dimension: {y.shape[1]} (10 classes)')
+        print(f'Number of actions: {n_actions}')
+
+    return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
+
+
 # Dictionary mapping data geometry types to their corresponding create_data functions
 DATA_GEOMETRY_FUNCTIONS = {
     'euclidean': create_data_euclidean,
     'hyperbolic': create_data_hyperbolic,
     'arm': create_data_arm,
     'non_linear_fn': create_data_non_linear_fn,
+    'MNIST': create_data_mnist,
+    'mnist': create_data_mnist,
 }
 
 
 def create_data(C):
+    np.random.seed(C.seed)
     """
     Main create_data function that selects the appropriate data generation method
     based on the data_geometry configuration option.
