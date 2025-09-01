@@ -587,11 +587,11 @@ def create_data_mnist(C):
     # X = np.concatenate([images, action_in], axis=1).astype(np.float32)
 
     # Meta fields matching interface
-    corridor = np.zeros(images.shape[0], dtype=int)
+    corridor = np.zeros(X.shape[0], dtype=int)
     loc_X = np.column_stack([labels, actions])
     loc_y = labels
     action_taken = actions
-    dim_l = np.zeros(images.shape[0], dtype=int)
+    dim_l = np.zeros(X.shape[0], dtype=int)
 
     input_size = images.shape[1]  # 784
     output_size = images.shape[1]
