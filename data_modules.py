@@ -553,11 +553,11 @@ def create_data_mnist(C):
     actions = []
     for label in np.unique(image_labels):
         for action, action_in in zip(action_space, actions_in):
-            if label + action in labels:
+            if label + action in image_labels:
                 X.append(np.concatenate([images_samples[label + action], action_in]))
                 y.append(images_samples[label + action])
                 labels.append(label + action)
-                action_taken.append(action)
+                actions.append(action)
 
     X = np.array(X)
     y = np.array(y)
@@ -584,12 +584,12 @@ def create_data_mnist(C):
     #     y[i] = images[chosen_idx]
 
     # Inputs: [image, action encoding]
-    X = np.concatenate([images, action_in], axis=1).astype(np.float32)
+    # X = np.concatenate([images, action_in], axis=1).astype(np.float32)
 
     # Meta fields matching interface
     corridor = np.zeros(images.shape[0], dtype=int)
     loc_X = np.column_stack([labels, actions])
-    loc_y = new_labels
+    loc_y = labels
     action_taken = actions
     dim_l = np.zeros(images.shape[0], dtype=int)
 
