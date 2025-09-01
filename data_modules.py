@@ -534,34 +534,54 @@ def create_data_mnist(C):
     max_move_int = int(C.max_move)
     action_space = np.arange(-max_move_int, max_move_int + 1, 1, dtype=int)
     n_actions = len(action_space)
-    action_indices = rng.integers(0, n_actions, size=images.shape[0])
-    actions = action_space[action_indices]
-    keep_samples = ((actions+labels) >= min(labels)) & ((actions+labels) <= max(labels))
-    images = images[keep_samples]
-    labels = labels[keep_samples]
-    action_indices = action_indices[keep_samples]
-    actions = actions[keep_samples]
-    
+    # action_indices = rng.integers(0, n_actions, size=images.shape[0])
+    # actions = action_space[action_indices]
 
-    # Encode actions
-    if C.one_hot_actions:
-        action_in = np.eye(n_actions, dtype=np.float32)[action_indices]
-    else:
-        # Random but fixed embedding per action
-        rng_embed = np.random.default_rng(0)
-        action_embeddings = rng_embed.normal(0, 1, size=(n_actions, n_actions)).astype(np.float32)
-        action_in = action_embeddings[action_indices]
+    # keep_samples = ((actions+labels) >= min(labels)) & ((actions+labels) <= max(labels))
+    # images = images[keep_samples]
+    # labels = labels[keep_samples]
+    # action_indices = action_indices[keep_samples]
+    # actions = actions[keep_samples]
 
-    # Targets: MNIST images from the resulting class (shifted labels mod 10)
-    new_labels = (labels + actions) % 10
-    # For each new label, randomly select an image from the dataset with that label
-    y = np.zeros_like(images)
-    for i, lbl in enumerate(new_labels):
-        # Find indices of all images with the desired label
-        candidates = np.where(labels == lbl)[0]
-        # Randomly select one candidate (using rng for reproducibility)
-        chosen_idx = rng.choice(candidates)
-        y[i] = images[chosen_idx]
+    images_samples = np.stack([images[labels==label][0] for label in np.unique(labels)])
+    image_labels = np.unique(labels)
+
+    action_in = np.eye(n_actions, dtype=np.float32)
+    X = []
+    y = []
+    labels = []
+    actions = []
+    for label in np.unique(image_labels):
+        for action, action_in in zip(action_space, action_in):
+            if label + action in labels:
+                X.append(np.concatenate([images_samples[label + action], action_in]))
+                y.append(images_samples[label + action])
+                labels.append(label + action)
+                action_taken.append(action)
+
+    X = np.array(X)
+    y = np.array(y)
+    labels = np.array(labels)
+    actions = np.array(actions)
+    # # Encode actions
+    # if C.one_hot_actions:
+    #     action_in = np.eye(n_actions, dtype=np.float32)[action_indices]
+    # else:
+    #     # Random but fixed embedding per action
+    #     rng_embed = np.random.default_rng(0)
+    #     action_embeddings = rng_embed.normal(0, 1, size=(n_actions, n_actions)).astype(np.float32)
+    #     action_in = action_embeddings[action_indices]
+
+    # # Targets: MNIST images from the resulting class (shifted labels mod 10)
+    # new_labels = (labels + actions) % 10
+    # # For each new label, randomly select an image from the dataset with that label
+    # y = np.zeros_like(images)
+    # for i, lbl in enumerate(new_labels):
+    #     # Find indices of all images with the desired label
+    #     candidates = np.where(labels == lbl)[0]
+    #     # Randomly select one candidate (using rng for reproducibility)
+    #     chosen_idx = rng.choice(candidates)
+    #     y[i] = images[chosen_idx]
 
     # Inputs: [image, action encoding]
     X = np.concatenate([images, action_in], axis=1).astype(np.float32)
