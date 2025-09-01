@@ -546,13 +546,13 @@ def create_data_mnist(C):
     images_samples = np.stack([images[labels==label][0] for label in np.unique(labels)])
     image_labels = np.unique(labels)
 
-    action_in = np.eye(n_actions, dtype=np.float32)
+    actions_in = np.eye(n_actions, dtype=np.float32)
     X = []
     y = []
     labels = []
     actions = []
     for label in np.unique(image_labels):
-        for action, action_in in zip(action_space, action_in):
+        for action, action_in in zip(action_space, actions_in):
             if label + action in labels:
                 X.append(np.concatenate([images_samples[label + action], action_in]))
                 y.append(images_samples[label + action])
