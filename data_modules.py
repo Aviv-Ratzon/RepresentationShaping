@@ -535,11 +535,12 @@ def create_data_mnist(C):
     action_space = np.arange(-max_move_int, max_move_int + 1, 1, dtype=int)
     n_actions = len(action_space)
     action_indices = rng.integers(0, n_actions, size=images.shape[0])
-    actions = action_space[action_indices]
     keep_samples = ((actions+labels) >= min(labels)) & ((actions+labels) <= max(labels))
     images = images[keep_samples]
     labels = labels[keep_samples]
-    actions = actions[keep_samples]
+    action_indices = action_indices[keep_samples]
+    
+    actions = action_space[action_indices]
 
     # Encode actions
     if C.one_hot_actions:
