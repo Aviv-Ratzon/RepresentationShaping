@@ -84,6 +84,7 @@ class Config:
         self.input_smoothing = 0
         self.mask_states = None
         self.data_geometry = 'euclidean'  # Options: 'euclidean', 'hyperbolic'
+        self.cyclic_corridors = False
 
         # Model
         self.sig_h_2 = None

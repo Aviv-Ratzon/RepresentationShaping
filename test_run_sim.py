@@ -5,7 +5,7 @@ C = Config()
 C.G = 1
 C.linear_net = False
 C.learning_rate = 0.0001
-C.data_geometry = 'MNIST'
+C.data_geometry = 'euclidean'
 C.L=10
 C.print_progress = True
 C.length_corridors = [10]*1
@@ -15,6 +15,7 @@ C.num_epochs = 10000
 C.algo_name = 'Adam'
 C.loss_fn = nn.MSELoss()
 C.max_move = 5
+C.cyclic_corridors = True
 
 C.num_samples = 500
 C.B = 1
