@@ -39,7 +39,7 @@ for max_move in [1, 5]:
     class LinearSVM(nn.Module):
         def __init__(self, input_dim, num_classes):
             super().__init__()
-            self.fc = nn.Linear(input_dim, num_classes)
+            self.fc = nn.Linear(input_dim, num_classes, bias=False)
 
         def forward(self, x):
             return self.fc(x)
@@ -56,8 +56,9 @@ for max_move in [1, 5]:
 
     model = LinearSVM(input_dim, num_classes)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    num_epochs = 100000
+    num_epochs = 100000 * max_move
 
+    loss_l = []
     for epoch in range(num_epochs):
         # No batching: train on all data at once
         outputs = model(X_tensor)
@@ -65,6 +66,7 @@ for max_move in [1, 5]:
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
+        loss_l.append(loss.item())
         print(f"Epoch {epoch+1}/{num_epochs}, Loss: {loss.item():.4f}")
 
     # Evaluate accuracy
@@ -74,16 +76,21 @@ for max_move in [1, 5]:
         acc = (preds == y_tensor).float().mean().item()
         print(f"Training accuracy: {acc*100:.2f}%")
 
+    plt.plot(loss_l)
+    plt.yscale('log')
+    plt.xscale('log')
+    plt.title(f'Accuracy: {acc*100:.2f}%')
+    plt.show()
 
     W = model.fc.weight.detach().clone().numpy().T
-    W = W/np.linalg.norm(W)
-    U, S, V = np.linalg.svd(W)
-    plt.plot(U[:,0])
-    plt.show()
+    W_norm = W/np.linalg.norm(W)
+    # U, S, V = np.linalg.svd(W_norm)
+    # plt.plot(U[:,0])
+    # plt.show()
 
-    plt.scatter(X@U[:,0]*S[0], X@U[:,1]*S[1], c=loc_y)
-    plt.axis('equal')
-    plt.show()
+    # plt.scatter(X@U[:,0]*S[0], X@U[:,1]*S[1], c=loc_y)
+    # plt.axis('equal')
+    # plt.show()
 
     import numpy as np
 
@@ -116,14 +123,14 @@ for max_move in [1, 5]:
     # y: shape (N,)
     # W: shape (K, d)
 
-    alpha = decompose_weights(X, W)
+    # alpha = decompose_weights(X, W)
 
-    # Verify reconstruction
-    W_reconstructed = X.T @ alpha # shape: (K, d)
-    print("Reconstruction error:", np.linalg.norm(W - W_reconstructed))
-    U, S, V = np.linalg.svd(W_reconstructed)
-    plt.plot(U[:,0])
-    plt.show()
+    # # Verify reconstruction
+    # W_reconstructed = X.T @ alpha # shape: (K, d)
+    # print("Reconstruction error:", np.linalg.norm(W - W_reconstructed))
+    # U, S, V = np.linalg.svd(W_reconstructed)
+    # plt.plot(U[:,0])
+    # plt.show()
 
     X_l.append(X)
     alpha_l.append(alpha)
@@ -133,6 +140,8 @@ for max_move in [1, 5]:
     loc_y_l.append(loc_y)
     loc_X_l.append(loc_X)
 # Compute the symmetric color scale limits across both alpha_l[0] and alpha_l[1]
+
+stop
 
 fig, axs = plt.subplots(1, 2, figsize=(10, 5))
 for alpha, ax in zip(alpha_l, axs.flatten()):
@@ -178,5 +187,43 @@ for alpha, X, W, y, action_taken, loc_X, loc_y in zip(alpha_l, X_l, W_l, y_l, ac
     plt.plot(U[:,0])
     plt.show()
 
-U, S, V = np.linalg.svd(W, full_matrices=False)
-plt.plot((X.T@alpha@np.linalg.pinv(np.diag(S)@V)))
+def multiclass_functional_margin(W, X, y, reducer=np.min, normalize=True):
+    if normalize:
+        W = W / np.linalg.norm(W)
+    margins = []
+    i_max_other_score_l = []
+    for x, y_curr in zip(X, y):
+        label = y_curr.argmax()
+        scores = x@W  # shape (K,)
+        true_score = scores[label]
+        max_other_score = np.max(np.delete(scores, label))
+        i_max_other_score = np.argmax(np.delete(scores, label))
+        margins.append(true_score - max_other_score)
+        i_max_other_score_l.append(i_max_other_score)
+    return reducer(margins), np.argmin(margins), i_max_other_score_l[np.argmin(margins)]
+
+
+max_move_l = [1, 5]
+# Compute all margins first to determine common bins
+all_margins = []
+for X, y, W in zip(X_l, y_l, W_l):
+    margins = multiclass_functional_margin(W, X, y, reducer=np.array, normalize=False)[0]
+    all_margins.append(margins)
+# Concatenate all margins to get global min/max
+all_margins_concat = np.concatenate(all_margins)
+# Choose bins (e.g., 20 bins between min and max)
+n_bins = 20
+bins = np.linspace(all_margins_concat.min(), all_margins_concat.max(), n_bins + 1)
+
+fig, axs = plt.subplots(2, 1, figsize=(10, 5), sharex=True)
+for ax, margins, max_move in zip(axs, all_margins, max_move_l):
+    ax.hist(margins, bins=bins, alpha=1)
+    ax.set_title(f'A={max_move}')
+ax.set_xlabel('sample margins')
+plt.show()
+
+for W_norm in W_l:
+    U, S, V = np.linalg.svd(W_norm)
+    plt.plot(U[:,0])
+    plt.show()
+

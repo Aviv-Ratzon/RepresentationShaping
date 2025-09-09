@@ -662,8 +662,9 @@ def get_effective_W_from_model_dict(model_dict, to_hidden=False, normalize=None)
         W_effective = W_effective @ W.T
     return W_effective
 
-def multiclass_functional_margin(W, X, y, reducer=np.min):
-    W = W / np.linalg.norm(W)
+def multiclass_functional_margin(W, X, y, reducer=np.min, normalize=True):
+    if normalize:
+        W = W / np.linalg.norm(W)
     margins = []
     i_max_other_score_l = []
     for x, y_curr in zip(X, y):
