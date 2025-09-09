@@ -662,6 +662,12 @@ def get_effective_W_from_model_dict(model_dict, to_hidden=False, normalize=None)
         W_effective = W_effective @ W.T
     return W_effective
 
+def multiclass_functional_margin_from_data_dict(data_dict, reducer=np.min, normalize=True):
+    W = get_effective_W_from_model_dict(data_dict['final_weights'], normalize=normalize).cpu().numpy()
+    X = data_dict['X'].cpu().numpy()
+    y = data_dict['y'].cpu().numpy()
+    return multiclass_functional_margin(W, X, y, reducer=reducer, normalize=normalize)
+
 def multiclass_functional_margin(W, X, y, reducer=np.min, normalize=True):
     if normalize:
         W = W / np.linalg.norm(W)
