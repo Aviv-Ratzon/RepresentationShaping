@@ -453,13 +453,14 @@ def create_data_non_linear_fn(C):
             # Different non-linear transformations for each dimension
             if i % 4 == 0:
                 # Sine function with different frequencies
-                result[:, i] = np.sin(s * (1 + i * 0.5))
+                result[:, i] = np.sin(2*np.pi*s * (1 + i * 0.5))
             elif i % 4 == 1:
                 # Cosine function with different frequencies
-                result[:, i] = np.cos(s * (1 + i * 0.3))
+                result[:, i] = np.cos(2*np.pi*s * (1 + i * 0.3))
             elif i % 4 == 2:
                 # Polynomial function
-                result[:, i] = s**2 + i * s + 1
+                # Use a higher order polynomial with larger coefficients for more variation in [-1,1]
+                result[:, i] = 5*s**5 - 10*s**3 + 3*s**2 + i*s + 1
             else:
                 # Exponential function
                 result[:, i] = np.exp(-s**2 / (2 + i))
