@@ -444,25 +444,25 @@ def create_data_non_linear_fn(C):
             C._poly_coeffs = np.random.randn(C.function_dim, C.poly_degree)*0.1
         coeffs = C._poly_coeffs  # shape: (function_dim, degree+1)
         # For each dimension, evaluate the polynomial at all s
-        for i in range(C.function_dim):
-            # np.polyval expects highest degree first
-            result[:, i] = np.polyval(coeffs[i], s)
         # for i in range(C.function_dim):
-        #     # # result[:, i] = np.exp(s)
-        #     result[:, i] = float(i-s)
-            # # Different non-linear transformations for each dimension
-            # if i % 4 == 0:
-            #     # Sine function with different frequencies
-            #     result[:, i] = np.sin(s * (1 + i * 0.5))
-            # elif i % 4 == 1:
-            #     # Cosine function with different frequencies
-            #     result[:, i] = np.cos(s * (1 + i * 0.3))
-            # elif i % 4 == 2:
-            #     # Polynomial function
-            #     result[:, i] = s**2 + i * s + 1
-            # else:
-            #     # Exponential function
-            #     result[:, i] = np.exp(-s**2 / (2 + i))
+            # np.polyval expects highest degree first
+            # result[:, i] = np.polyval(coeffs[i], s)
+        for i in range(C.function_dim):
+            # # result[:, i] = np.exp(s)
+            # result[:, i] = float(i-s)
+            # Different non-linear transformations for each dimension
+            if i % 4 == 0:
+                # Sine function with different frequencies
+                result[:, i] = np.sin(s * (1 + i * 0.5))
+            elif i % 4 == 1:
+                # Cosine function with different frequencies
+                result[:, i] = np.cos(s * (1 + i * 0.3))
+            elif i % 4 == 2:
+                # Polynomial function
+                result[:, i] = s**2 + i * s + 1
+            else:
+                # Exponential function
+                result[:, i] = np.exp(-s**2 / (2 + i))
         
         return result
     
