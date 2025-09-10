@@ -432,6 +432,7 @@ def create_data_non_linear_fn(C):
     s_values = s_values[valid_mask]
     actions = actions[valid_mask]
     
+    rand_params = np.random.uniform(-2, 2, 9)
     # Define a non-linear function f(s) - using a combination of trigonometric and polynomial functions
     def non_linear_function(s):
         # Create a D-dimensional output with non-linear transformations
@@ -451,19 +452,20 @@ def create_data_non_linear_fn(C):
             # # result[:, i] = np.exp(s)
             # result[:, i] = float(i-s)
             # Different non-linear transformations for each dimension
-            if i % 4 == 0:
+            if i % 2 == 0:
                 # Sine function with different frequencies
-                result[:, i] = np.sin(2*np.pi*s * (1 + i * 0.5))
-            elif i % 4 == 1:
+                distorter = np.round(s*1)
+                result[:, i] = rand_params[distorter.astype(int)]*np.sin(2*np.pi*s * (1 + i * 0.5))
+            elif i % 2 == 1:
                 # Cosine function with different frequencies
-                result[:, i] = np.cos(2*np.pi*s * (1 + i * 0.3))
-            elif i % 4 == 2:
-                # Polynomial function
-                # Use a higher order polynomial with larger coefficients for more variation in [-1,1]
-                result[:, i] = 5*s**5 - 10*s**3 + 3*s**2 + i*s + 1
-            else:
-                # Exponential function
-                result[:, i] = np.tanh(s * (2 + i))
+                result[:, i] = rand_params[distorter.astype(int)]*np.cos(2*np.pi*s * (1 + i * 0.3))
+            # elif i % 4 == 2:
+            #     # Polynomial function
+            #     # Use a higher order polynomial with larger coefficients for more variation in [-1,1]
+            #     result[:, i] = 5*s**5 - 10*s**3 + 3*s**2 + i*s + 1
+            # else:
+            #     # Exponential function
+            #     result[:, i] = np.tanh(s * (2 + i))
         
         return result
     
