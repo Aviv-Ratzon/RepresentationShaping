@@ -463,7 +463,7 @@ def create_data_non_linear_fn(C):
                 result[:, i] = 5*s**5 - 10*s**3 + 3*s**2 + i*s + 1
             else:
                 # Exponential function
-                result[:, i] = np.exp(-s**2 / (2 + i))
+                result[:, i] = np.tanh(s * (2 + i))
         
         return result
     
