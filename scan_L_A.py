@@ -20,10 +20,10 @@ import shutil
 C = Config()
 C.G = 1
 C.linear_net = True
-C.learning_rate = 0.1
+C.learning_rate = 0.01
 C.length_corridors = [30]*1
 C.hidden_size = len(C.length_corridors) * (C.length_corridors[0] * 3 - 1)
-C.num_epochs = 100000
+C.num_epochs = 10000
 C.algo_name = 'Adam'
 C.loss_fn = nn.CrossEntropyLoss()
 
