@@ -177,7 +177,7 @@ def train_model(C: Config, X, y, model, action_taken):
         with torch.no_grad():
             if epoch in sample_inds[::10]:
                 outputs, hidden_states = model(X)
-                hidden_l.append([h.cpu().detach().numpy() for h in hidden_states])
+                # hidden_l.append([h.cpu().detach().numpy() for h in hidden_states])
 
             if epoch in sample_inds:
                 outputs, hidden_states = model(X)
@@ -191,8 +191,8 @@ def train_model(C: Config, X, y, model, action_taken):
                 else:
                     accuracy_l.append(0)
                 
-        if epoch in sample_inds_state_dict:
-            state_dict_l.append(deepcopy(model.state_dict()))
+        # if epoch in sample_inds_state_dict:
+        #     state_dict_l.append(deepcopy(model.state_dict()))
     
     model.float()
     return loss_l, accuracy_l, hidden_l, state_dict_l
