@@ -423,6 +423,11 @@ def create_data_non_linear_fn(C):
     else:
         s_values = np.random.uniform(C.s_range[0], C.s_range[1], C.num_samples)
         actions = np.random.uniform(-C.max_move, C.max_move, C.num_samples)
+
+    if C.discrete_actions:
+        action_idx = np.random.choice(2*C.n_actions + 1, C.num_samples)
+        actions = np.linspace(-C.max_move, C.max_move, C.n_actions)[action_idx]
+        one_hot_actions = np.eye(2*C.n_actions + 1)[action_idx]
     
     # Generate random actions a in the range [-C.max_move, C.max_move]
 
@@ -431,6 +436,11 @@ def create_data_non_linear_fn(C):
     valid_mask = (s_plus_a >= C.s_range[0]) & (s_plus_a <= C.s_range[1])
     s_values = s_values[valid_mask]
     actions = actions[valid_mask]
+    if C.discrete_actions:
+        one_hot_actions = one_hot_actions[valid_mask]
+        actions_in = one_hot_actions
+    else:
+        actions_in = actions.reshape(-1, 1)
     
     rand_params = np.random.uniform(-2, 2, 9)
     # Define a non-linear function f(s) - using a combination of trigonometric and polynomial functions
@@ -477,8 +487,7 @@ def create_data_non_linear_fn(C):
     
     # Create input features: [f(s), a]
     # Reshape actions to be a column vector for concatenation
-    actions_reshaped = actions.reshape(-1, 1)
-    X = np.concatenate([f_s, actions_reshaped], axis=1)
+    X = np.concatenate([f_s, actions_in], axis=1)
     
     # Create target features: f(s+a)
     y = f_s_plus_a
