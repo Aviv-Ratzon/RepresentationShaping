@@ -20,18 +20,18 @@ import shutil
 C = Config()
 C.G = 1
 C.linear_net = True
-C.learning_rate = 0.01
+C.learning_rate = 0.001
 C.length_corridors = [30]*1
 C.hidden_size = len(C.length_corridors) * (C.length_corridors[0] * 3 - 1)
-C.num_epochs = 100000
+C.num_epochs = 1000000
 C.algo_name = 'Adam'
 C.loss_fn = nn.CrossEntropyLoss()
 
 # Sweep variables
 var_name1 = 'max_move'
-var_values1 = np.arange(1, C.length_corridors[0])
+var_values1 = [23] #np.arange(1, C.length_corridors[0])
 var_name2 = 'L'
-var_values2 = np.arange(10)
+var_values2 = [9] #np.arange(10)
 
 # Prepare output directory
 output_dir = "results/sweep_L_A"
