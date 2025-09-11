@@ -426,7 +426,7 @@ def create_data_non_linear_fn(C):
 
     if C.discrete_actions:
         action_idx = np.random.choice(2*C.n_actions + 1, C.num_samples)
-        actions = np.linspace(-C.max_move, C.max_move, C.n_actions)[action_idx]
+        actions = np.linspace(-C.max_move, C.max_move, 2*C.n_actions + 1)[action_idx]
         one_hot_actions = np.eye(2*C.n_actions + 1)[action_idx]
     
     # Generate random actions a in the range [-C.max_move, C.max_move]
@@ -502,7 +502,7 @@ def create_data_non_linear_fn(C):
     # Set sizes for compatibility
     input_size = C.function_dim  # f(s) + action a
     output_size = C.function_dim      # f(s+a)
-    n_actions = 1   # Number of possible action values
+    n_actions = actions_in.shape[1]   # Number of possible action values
     
     if C.print_progress:
         print(f'Number of samples: {X.shape[0]}')
