@@ -474,13 +474,19 @@ def create_data_non_linear_fn(C):
             # Piecewise continuous function
             f = np.zeros((n, C.function_dim))
             for i in range(C.function_dim):
-                # Different breakpoints for each dimension
-                breakpoint = -1 + 2 * i / C.function_dim
-                mask1 = s < breakpoint
-                mask2 = s >= breakpoint
-                
-                f[mask1, i] = np.sin(s[mask1] + i) + 0.5 * s[mask1]**2
-                f[mask2, i] = np.cos(s[mask2] + i) + 0.3 * s[mask2]**3
+                # Configurable number of breakpoints per dimension, all within s_range
+                n_breakpoints = getattr(C, 'n_breakpoints', 1)
+                s_min, s_max = C.s_range
+                # Generate breakpoints for this dimension, evenly spaced within s_range
+                breakpoints = np.linspace(s_min, s_max, n_breakpoints + 2)[1:-1]  # exclude endpoints
+                # Assign piecewise function based on which interval s falls into
+                prev_mask = np.ones_like(s, dtype=bool)
+                for j, bp in enumerate(breakpoints):
+                    mask = prev_mask & (s < bp)
+                    f[mask, i] = np.sin(s[mask] + i + j) + 0.5 * s[mask]**2
+                    prev_mask = prev_mask & (s >= bp)
+                # Last interval (s >= last breakpoint)
+                f[prev_mask, i] = np.cos(s[prev_mask] + i + n_breakpoints) + 0.3 * s[prev_mask]**3
         
         return f
     
