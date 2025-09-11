@@ -13,3 +13,5 @@ __pycache__/*
 __pycache__/run_sim.cpython-310.pyc
 /PRECO
 /data/*
+*.png
+*.jpg
