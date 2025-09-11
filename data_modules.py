@@ -399,6 +399,8 @@ def create_data_non_linear_fn(C):
     X is tuples [f(s), a] where f is a D-dimensional non-linear function parametrized by a scalar s,
     and a is a scalar in the range [-C.max_move, C.max_move].
     y is f(s+a).
+    
+    This function supports both continuous and piecewise continuous nonlinear functions.
     """
     # Set default parameters if not provided
     if not hasattr(C, 'num_samples'):
@@ -406,11 +408,13 @@ def create_data_non_linear_fn(C):
     if not hasattr(C, 'function_dim'):
         C.function_dim = 10  # Dimensionality of the non-linear function f(s)
     if not hasattr(C, 's_range'):
-        C.s_range = (-1.0, 1.0)  # Range for the parameter s
+        C.s_range = (-2.0, 2.0)  # Range for the parameter s (expanded range)
     if not hasattr(C, 'discrete_samples'):
-        C.discrete_samples = False  # Range for the parameter s
-    if not hasattr(C, 'poly_degree'):
-        C.poly_degree = 10  # Range for the parameter s
+        C.discrete_samples = False  # Whether to use discrete sampling
+    if not hasattr(C, 'continuous_function'):
+        C.continuous_function = True  # Whether to use continuous or piecewise continuous function
+    if not hasattr(C, 'discrete_actions'):
+        C.discrete_actions = False  # Whether to use discrete actions
     
     # Generate random parameter values s
     if C.discrete_samples:
@@ -429,8 +433,6 @@ def create_data_non_linear_fn(C):
         actions = np.linspace(-C.max_move, C.max_move, 2*C.n_actions + 1)[action_idx]
         one_hot_actions = np.eye(2*C.n_actions + 1)[action_idx]
     
-    # Generate random actions a in the range [-C.max_move, C.max_move]
-
     # Remove samples where s_values + actions are outside of s_range
     s_plus_a = s_values + actions
     valid_mask = (s_plus_a >= C.s_range[0]) & (s_plus_a <= C.s_range[1])
@@ -442,42 +444,45 @@ def create_data_non_linear_fn(C):
     else:
         actions_in = actions.reshape(-1, 1)
     
-    rand_params = np.random.uniform(-2, 2, 9)
-    # Define a non-linear function f(s) - using a combination of trigonometric and polynomial functions
+    # Define the improved non-linear function f(s) with continuous/piecewise options
     def non_linear_function(s):
-        # Create a D-dimensional output with non-linear transformations
-        result = np.zeros((len(s), C.function_dim))
-        # For each dimension, create a random polynomial of degree C.function_dim
-        # The coefficients are sampled randomly for each dimension
-        # Store the coefficients for reproducibility
-        if not hasattr(C, '_poly_coeffs'):
-            # Generate and store coefficients: shape (C.function_dim, C.function_dim + 1)
-            C._poly_coeffs = np.random.randn(C.function_dim, C.poly_degree)*0.1
-        coeffs = C._poly_coeffs  # shape: (function_dim, degree+1)
-        # For each dimension, evaluate the polynomial at all s
-        # for i in range(C.function_dim):
-            # np.polyval expects highest degree first
-            # result[:, i] = np.polyval(coeffs[i], s)
-        for i in range(C.function_dim):
-            # # result[:, i] = np.exp(s)
-            # result[:, i] = float(i-s)
-            # Different non-linear transformations for each dimension
-            if i % 2 == 0:
-                # Sine function with different frequencies
-                distorter = np.round(s*1)
-                result[:, i] = rand_params[distorter.astype(int)]*np.sin(2*np.pi*s * (1 + i * 0.5))
-            elif i % 2 == 1:
-                # Cosine function with different frequencies
-                result[:, i] = rand_params[distorter.astype(int)]*np.cos(2*np.pi*s * (1 + i * 0.3))
-            # elif i % 4 == 2:
-            #     # Polynomial function
-            #     # Use a higher order polynomial with larger coefficients for more variation in [-1,1]
-            #     result[:, i] = 5*s**5 - 10*s**3 + 3*s**2 + i*s + 1
-            # else:
-            #     # Exponential function
-            #     result[:, i] = np.tanh(s * (2 + i))
+        """
+        Generate high-dimensional nonlinear function output.
         
-        return result
+        Args:
+            s: Latent variable values
+            continuous: If True, use continuous function; if False, use piecewise continuous
+            
+        Returns:
+            Array of shape (len(s), C.function_dim) containing function outputs
+        """
+        s = np.atleast_1d(s)
+        n = len(s)
+        
+        if C.continuous_function:
+            # Continuous nonlinear function: combination of trigonometric and polynomial terms
+            f = np.zeros((n, C.function_dim))
+            for i in range(C.function_dim):
+                # Different frequency and phase for each dimension
+                freq = 1 + 0.1 * i
+                phase = 0.5 * i
+                f[:, i] = (np.sin(freq * s + phase) + 
+                          0.5 * np.cos(2 * freq * s + phase) + 
+                          0.1 * s**2 + 
+                          0.05 * s**3)
+        else:
+            # Piecewise continuous function
+            f = np.zeros((n, C.function_dim))
+            for i in range(C.function_dim):
+                # Different breakpoints for each dimension
+                breakpoint = -1 + 2 * i / C.function_dim
+                mask1 = s < breakpoint
+                mask2 = s >= breakpoint
+                
+                f[mask1, i] = np.sin(s[mask1] + i) + 0.5 * s[mask1]**2
+                f[mask2, i] = np.cos(s[mask2] + i) + 0.3 * s[mask2]**3
+        
+        return f
     
     # Calculate function values at s
     f_s = non_linear_function(s_values)
@@ -486,7 +491,6 @@ def create_data_non_linear_fn(C):
     f_s_plus_a = non_linear_function(s_values + actions)
     
     # Create input features: [f(s), a]
-    # Reshape actions to be a column vector for concatenation
     X = np.concatenate([f_s, actions_in], axis=1)
     
     # Create target features: f(s+a)
@@ -511,6 +515,7 @@ def create_data_non_linear_fn(C):
         print(f'Function dimension: {C.function_dim}')
         print(f'Action range: [-{C.max_move}, {C.max_move}]')
         print(f'Parameter s range: {C.s_range}')
+        print(f'Function type: {"Continuous" if C.continuous_function else "Piecewise continuous"}')
         print(f'Number of actions: {n_actions}\n')
     
     return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
