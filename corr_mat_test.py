@@ -32,8 +32,8 @@ plt.legend()
 plt.show()
 
 
-C.length_corridors = [100]*1
-C.max_move = 1* C.length_corridors[0]//4-1
+C.length_corridors = [10]*1
+C.max_move = 1* C.length_corridors[0]//2
 C.cyclic_corridors = True
 X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions = create_data(C)
 Sigma11 = X.T@X
@@ -211,3 +211,22 @@ eigvals = np.linalg.eigvalsh(band_matrix)
 pr = (np.sum(eigvals) ** 2) / np.sum(eigvals ** 2)
 
 print(f"Circular band matrix (L={L}, m={m}) Participation Ratio: {pr:.2f}")
+
+L = 30
+A = 15
+mat = np.zeros((L, L))
+for i in range(L):
+    mat[i, max(0, i-A):min(L, i+A+1)] = 1
+plt.imshow(mat)
+U, S, V = np.linalg.svd(mat)
+plt.plot(U[:,0])
+
+plt.imshow(Sigma)
+U, S, V = np.linalg.svd(X, full_matrices=True)
+rank = sum(S > 1e-10)
+V = V[:rank,:]
+U = U[:,:rank]
+S = S[:rank]
+plt.imshow(V.T@np.diag(S**-1)@U.T@y)
+
+plt.imshow(y)
