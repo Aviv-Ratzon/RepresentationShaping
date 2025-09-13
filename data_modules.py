@@ -445,8 +445,8 @@ def create_data_non_linear_fn(C):
         actions_in = actions.reshape(-1, 1)
     
     # Define the improved non-linear function f(s) with continuous/piecewise options
-    functions_slopes = np.random.uniform(C.s_range[0]*2, C.s_range[1]*2, [C.n_breakpoints, C.function_dim])
-    functions_biases = np.random.uniform(C.s_range[0]*2, C.s_range[1]*2, [C.n_breakpoints, C.function_dim])
+    functions_slopes = np.random.uniform(C.s_range[0]*2, C.s_range[1]*2, [C.n_breakpoints+1, C.function_dim])
+    functions_biases = np.random.uniform(C.s_range[0]*2, C.s_range[1]*2, [C.n_breakpoints+1, C.function_dim])
     def non_linear_function(s):
         """
         Generate high-dimensional nonlinear function output.
