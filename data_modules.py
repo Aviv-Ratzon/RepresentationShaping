@@ -445,6 +445,8 @@ def create_data_non_linear_fn(C):
         actions_in = actions.reshape(-1, 1)
     
     # Define the improved non-linear function f(s) with continuous/piecewise options
+    functions_slopes = np.random.uniform(C.s_range[0]*2, C.s_range[1]*2, [C.n_breakpoints, C.function_dim])
+    functions_biases = np.random.uniform(C.s_range[0]*2, C.s_range[1]*2, [C.n_breakpoints, C.function_dim])
     def non_linear_function(s):
         """
         Generate high-dimensional nonlinear function output.
@@ -478,15 +480,10 @@ def create_data_non_linear_fn(C):
                 n_breakpoints = getattr(C, 'n_breakpoints', 1)
                 s_min, s_max = C.s_range
                 # Generate breakpoints for this dimension, evenly spaced within s_range
-                breakpoints = np.linspace(s_min, s_max, n_breakpoints + 2)[1:-1]  # exclude endpoints
+                breakpoints = np.linspace(s_min, s_max, n_breakpoints + 2)
+                bin_indices = np.digitize(s, breakpoints)
                 # Assign piecewise function based on which interval s falls into
-                prev_mask = np.ones_like(s, dtype=bool)
-                for j, bp in enumerate(breakpoints):
-                    mask = prev_mask & (s < bp)
-                    f[mask, i] = np.sin(s[mask] + i + j) + 0.5 * s[mask]**2
-                    prev_mask = prev_mask & (s >= bp)
-                # Last interval (s >= last breakpoint)
-                f[prev_mask, i] = np.cos(s[prev_mask] + i + n_breakpoints) + 0.3 * s[prev_mask]**3
+                f[:, i] = functions_slopes[bin_indices, i] * s + functions_biases[bin_indices, i]
         
         return f
     
