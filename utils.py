@@ -200,8 +200,8 @@ def calc_NC1(h, y):
 
 def calc_NC1_from_data_dict(data_dict):
     h_np = data_dict['hidden_states'][-1].cpu().numpy()
-    loc_y = data_dict['loc_y']
-    return calc_NC1(h_np, loc_y)
+    y = data_dict['y'].cpu().numpy()
+    return calc_NC1(h_np, y.argmax(1))
 
 def calc_PR(h):
     cov = compute_covariance(h)

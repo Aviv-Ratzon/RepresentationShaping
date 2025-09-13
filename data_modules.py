@@ -527,6 +527,257 @@ def create_data_non_linear_fn(C):
     return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
 
 
+def create_data_uneven_corridors(C):
+    """
+    Create data for uneven 2D discrete state corridors.
+    
+    This module supports two 2D corridors with different widths and lengths.
+    Actions are available in both dimensions within the max_move parameter range.
+    Actions can be shared or separated between environments based on split_actions.
+    
+    Configuration parameters:
+    - corridor_widths: List of widths for each corridor [width1, width2]
+    - corridor_lengths: List of lengths for each corridor [length1, length2]
+    - max_move: Maximum movement in any dimension
+    - min_move: Minimum movement (default 0)
+    - split_actions: Whether actions are shared (False) or separated (True) between corridors
+    - allow_backwards: Whether negative movements are allowed
+    - one_hot_actions: Whether to use one-hot encoding for actions
+    - one_hot_inputs: Whether to use one-hot encoding for states
+    - input_size: Size of input vectors (if not one_hot_inputs)
+    - input_smoothing: Smoothing parameter for gaussian filter
+    - egocentric_movement: Whether movement direction depends on corridor
+    - cyclic_corridors: Whether corridors wrap around
+    - mask_states: States to exclude from the dataset
+    - whiten_data: Whether to apply PCA whitening
+    - print_progress: Whether to print progress information
+    """
+    # Set default parameters if not provided
+    if not hasattr(C, 'corridor_widths'):
+        C.corridor_widths = [3, 4]  # Default widths for the two corridors
+    if not hasattr(C, 'corridor_lengths'):
+        C.corridor_lengths = [5, 6]  # Default lengths for the two corridors
+    if not hasattr(C, 'min_move'):
+        C.min_move = 0
+    if not hasattr(C, 'allow_backwards'):
+        C.allow_backwards = True
+    if not hasattr(C, 'one_hot_actions'):
+        C.one_hot_actions = True
+    if not hasattr(C, 'one_hot_inputs'):
+        C.one_hot_inputs = True
+    if not hasattr(C, 'input_size'):
+        C.input_size = 10
+    if not hasattr(C, 'input_smoothing'):
+        C.input_smoothing = 0.1
+    if not hasattr(C, 'egocentric_movement'):
+        C.egocentric_movement = False
+    if not hasattr(C, 'cyclic_corridors'):
+        C.cyclic_corridors = False
+    if not hasattr(C, 'mask_states'):
+        C.mask_states = None
+    if not hasattr(C, 'whiten_data'):
+        C.whiten_data = False
+    if not hasattr(C, 'print_progress'):
+        C.print_progress = False
+    if not hasattr(C, 'split_actions'):
+        C.split_actions = False
+    
+    # Validate parameters
+    if len(C.corridor_widths) != 2:
+        raise ValueError("corridor_widths must have exactly 2 elements")
+    if len(C.corridor_lengths) != 2:
+        raise ValueError("corridor_lengths must have exactly 2 elements")
+    
+    n_cors = 2  # Two corridors
+    cor_dim = 2  # 2D corridors
+    
+    # Create action handler for uneven corridors
+    class UnevenActionHandler:
+        def __init__(self, C):
+            self.corridor_widths = C.corridor_widths
+            self.corridor_lengths = C.corridor_lengths
+            self.max_move = C.max_move
+            self.min_move = C.min_move
+            self.allow_backwards = C.allow_backwards
+            self.one_hot_actions = C.one_hot_actions
+            self.split_actions = C.split_actions
+            
+            # Generate actions
+            actions = np.concatenate([
+                np.arange(-self.max_move, -self.min_move + 1), 
+                np.arange(self.min_move, self.max_move + 1)
+            ])
+            actions = np.unique(actions)
+            
+            if self.allow_backwards:
+                self.run_actions = actions
+            else:
+                self.run_actions = actions[actions >= 0]
+            
+            # Create action IDs: (action, dimension, corridor)
+            # If split_actions is True, each corridor gets separate action space
+            if self.split_actions:
+                action_id = np.array(list(itertools.product(
+                    actions, range(cor_dim), range(n_cors)
+                ))).T
+            else:
+                # Shared actions across corridors
+                action_id = np.array(list(itertools.product(
+                    actions, range(cor_dim), [0]  # All corridors use same action space
+                ))).T
+            
+            self.n_actions = action_id.shape[1]
+            self.actions_id = action_id
+            
+            # Generate action encodings
+            if self.one_hot_actions:
+                self.actions_in = [one_hot(i, self.n_actions) for i in range(self.n_actions)]
+            else:
+                self.actions_in = [np.random.normal(0, 1, size=self.n_actions) for i in range(self.n_actions)]
+        
+        def __call__(self, dim, cor_num, action, split_actions):
+            if self.split_actions:
+                # Actions are separated by corridor
+                ind = np.where((self.actions_id[0] == action) &
+                               (self.actions_id[1] == dim) &
+                               (self.actions_id[2] == cor_num))[0]
+            else:
+                # Actions are shared across corridors
+                ind = np.where((self.actions_id[0] == action) &
+                               (self.actions_id[1] == dim) &
+                               (self.actions_id[2] == 0))[0]
+            
+            if len(ind) != 1:
+                raise ValueError(f"Action {action} in dim {dim}, corridor {cor_num} found {len(ind)} times")
+            return self.actions_in[ind[0]]
+    
+    action_h = UnevenActionHandler(C)
+    run_actions = action_h.run_actions
+    n_actions = action_h.n_actions
+    
+    # Calculate total number of states
+    N_inputs = sum([width * length for width, length in zip(C.corridor_widths, C.corridor_lengths)])
+    
+    # Generate state vectors
+    if C.one_hot_inputs:
+        input_size = N_inputs
+        output_size = N_inputs
+        # Create one-hot vectors for each state
+        vecs = []
+        state_offset = 0
+        for i, (width, length) in enumerate(zip(C.corridor_widths, C.corridor_lengths)):
+            corridor_states = width * length
+            vec = np.eye(N_inputs)[state_offset:state_offset + corridor_states]
+            vecs.append(vec.reshape(width, length, N_inputs))
+            state_offset += corridor_states
+    else:
+        input_size = C.input_size
+        output_size = C.input_size
+        vecs = []
+        for i, (width, length) in enumerate(zip(C.corridor_widths, C.corridor_lengths)):
+            # Generate smooth random vectors
+            vec = gaussian_filter(
+                np.random.normal(size=(width * 3, length * 3, C.input_size)),
+                sigma=[width * C.input_smoothing, length * C.input_smoothing, 0]
+            )[width:-width, length:-length]
+            vec = vec - vec.mean(axis=(0, 1), keepdims=True)
+            vec = vec / vec.std(axis=(0, 1), keepdims=True)
+            vecs.append(vec)
+    
+    # Generate all possible positions for each corridor
+    X = []
+    y = []
+    loc_X = []
+    loc_y = []
+    corridor = []
+    action_taken = []
+    dim_l = []
+    
+    for cor, (width, length) in enumerate(zip(C.corridor_widths, C.corridor_lengths)):
+        vec = vecs[cor]
+        
+        # Generate all positions in this corridor
+        positions = list(itertools.product(range(width), range(length)))
+        
+        for loc in positions:
+            for dim in range(cor_dim):
+                for a in run_actions:
+                    if not C.egocentric_movement:
+                        a = a * (1 if cor == 0 else -1)
+                    
+                    next_loc = list(loc)
+                    next_loc[dim] += a
+                    
+                    # Check bounds based on corridor dimensions
+                    if not C.cyclic_corridors:
+                        if (next_loc[dim] < 0) or (next_loc[dim] >= (width if dim == 0 else length)) or (dim > 0 and a == 0):
+                            continue
+                    else:
+                        # Wrap around
+                        if dim == 0:  # Width dimension
+                            next_loc[dim] = next_loc[dim] % width
+                        else:  # Length dimension
+                            next_loc[dim] = next_loc[dim] % length
+                    
+                    # Get action encoding
+                    action_in = action_h(dim, cor, a, int(C.split_actions))
+                    
+                    # Get state vector
+                    v = vec[loc[0], loc[1]]
+                    
+                    # Check for masked states
+                    if C.mask_states and any(
+                        tuple([loc[i] + (step if i == dim else 0) for i in range(len(loc))]) in C.mask_states
+                        for step in (range(0, a + 1) if a >= 0 else range(0, a - 1, -1))
+                    ):
+                        continue
+                    
+                    # Get next state vector
+                    v_next = vec[next_loc[0], next_loc[1]]
+                    
+                    # Store data
+                    corridor.append(cor)
+                    dim_l.append(dim)
+                    loc_X.append(loc)
+                    loc_y.append(next_loc)
+                    X.append(np.concatenate([v, action_in]))
+                    y.append(v_next)
+                    action_taken.append(a)
+    
+    # Convert to numpy arrays
+    X = np.array(X)
+    y = np.array(y)
+    
+    # Normalize if not using one-hot inputs
+    if not C.one_hot_inputs:
+        X[:, :input_size] /= X[:, :input_size].std()
+        y[:, :output_size] /= y[:, :output_size].std()
+    
+    corridor = np.array(corridor)
+    loc_X = np.array(loc_X)
+    loc_y = np.array(loc_y)
+    action_taken = np.array(action_taken)
+    
+    
+    # Apply PCA whitening if requested
+    if C.whiten_data:
+        pca = PCA(whiten=True)
+        X = pca.fit_transform(X)
+    
+    if C.print_progress:
+        print(f'Number of samples: {X.shape[0]}')
+        print(f'Input dimension: {X.shape[1]}')
+        print(f'Output dimension: {y.shape[1]}')
+        print(f'Corridor 1: {C.corridor_widths[0]}x{C.corridor_lengths[0]}')
+        print(f'Corridor 2: {C.corridor_widths[1]}x{C.corridor_lengths[1]}')
+        print(f'Number of actions: {n_actions}')
+        print(f'Split actions: {C.split_actions}')
+        print(f'Max move: {C.max_move}')
+        print()
+    
+    return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
+
+
 def create_data_mnist(C):
     """
     Create data for MNIST with discrete actions. Each sample:
@@ -638,6 +889,7 @@ DATA_GEOMETRY_FUNCTIONS = {
     'hyperbolic': create_data_hyperbolic,
     'arm': create_data_arm,
     'non_linear_fn': create_data_non_linear_fn,
+    'uneven_corridors': create_data_uneven_corridors,
     'MNIST': create_data_mnist,
     'mnist': create_data_mnist,
 }

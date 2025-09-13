@@ -168,3 +168,40 @@ def plot_pca_1d(data_dict, title="", axs=None):
     axs[3].set_title("Loss")
 
     plt.tight_layout()
+
+    
+
+def plot_pca_subplot(ax, data_dict, title, cb=False):
+    h = data_dict['hidden_states'][-1].cpu().numpy()
+    loc_y = data_dict['loc_y']
+    action_taken = data_dict['action_taken']
+    corridor = data_dict['corridor']
+    cond = abs(action_taken) <= 1
+    # If loc_y is 2D, color by the first dimension
+    color = loc_y[:, 0] if loc_y.ndim > 1 else loc_y
+    color = color[cond]
+    h = h[cond]
+    corridor = corridor[cond]
+    # PCA to 2D
+    from sklearn.decomposition import PCA
+    h_pca = PCA(n_components=2).fit_transform(h)
+    
+    # Get corridor information and markers
+    markers = ['o', 'v', '*', 'v', '^', 'p', 'h', '8', 'X', 'd']
+    
+    # Plot each corridor with different markers
+    for cor, marker in zip(np.unique(corridor), markers):
+        mask = corridor == cor
+        sc = ax.scatter(
+            h_pca[mask, 0], h_pca[mask, 1], c=color[mask], cmap='viridis',
+            s=80, alpha=0.9, edgecolor='none', marker=marker
+        )
+    ax.set_title(title, fontsize=20, pad=10)
+    ax.axis('equal')
+    ax.tick_params(left=False, bottom=False, labelleft=False, labelbottom=False)
+    for spine in ['top', 'right', 'left', 'bottom']:
+        ax.spines[spine].set_visible(False)
+    if cb:
+        cbar = plt.colorbar(sc, ax=ax, pad=0.01, fraction=0.05)
+        cbar.ax.set_yticklabels([])  # Remove colorbar ticks
+        cbar.set_label('location', fontsize=16)
