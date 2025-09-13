@@ -480,7 +480,7 @@ def create_data_non_linear_fn(C):
                 n_breakpoints = getattr(C, 'n_breakpoints', 1)
                 s_min, s_max = C.s_range
                 # Generate breakpoints for this dimension, evenly spaced within s_range
-                breakpoints = np.linspace(s_min, s_max, n_breakpoints + 2)
+                breakpoints = np.linspace(s_min-0.01, s_max+0.01, n_breakpoints + 2)
                 bin_indices = np.digitize(s, breakpoints)
                 # Assign piecewise function based on which interval s falls into
                 f[:, i] = functions_slopes[bin_indices, i] * s + functions_biases[bin_indices, i]
