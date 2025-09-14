@@ -107,8 +107,15 @@ def principal_directions(cov, explained_var=0.95):
     eigvecs = eigvecs[:, idx]
     explained_variance_ratio = np.cumsum(eigvals) / np.sum(eigvals)
     k = np.where(explained_variance_ratio > explained_var)[0][0] if explained_variance_ratio[0] < explained_var else 0
-    print(k)
     return eigvecs[:, :k+1]
+
+def alignment_score_from_data_dict(data_dict, explained_var=0.95):
+    hidden = data_dict['hidden_states'][-1].cpu().numpy()
+    corridor = data_dict['corridor']
+    blob1 = hidden[corridor==0]
+    blob2 = hidden[corridor==1]
+    return alignment_score(blob1, blob2, explained_var)
+
 
 def alignment_score(blob1, blob2, explained_var=0.95):
     # Compute covariance matrices
