@@ -97,29 +97,27 @@ class MNISTActionDataset(Dataset):
         samples = []
         
         for i, (image, input_label) in enumerate(zip(self.data, self.labels)):
-            # Sample random action
-            action = random.randint(-self.A, self.A)
-            
-            # Compute target label
-            if self.cyclic:
-                target_label = (input_label + action) % 10
-            else:
-                target_label = input_label + action
-                # Skip if target is outside valid range
-                if target_label < 0 or target_label > 9:
-                    continue
-            
-            # One-hot encode action
-            action_onehot = torch.zeros(2 * self.A + 1)
-            action_onehot[action + self.A] = 1.0
-            
-            samples.append({
-                'input_image': image,
-                'input_label': input_label,
-                'action': action,
-                'action_onehot': action_onehot,
-                'target_label': target_label
-            })
+            for action in np.arange(-self.A, self.A + 1):    
+                # Compute target label
+                if self.cyclic:
+                    target_label = (input_label + action) % 10
+                else:
+                    target_label = input_label + action
+                    # Skip if target is outside valid range
+                    if target_label < 0 or target_label > 9:
+                        continue
+                
+                # One-hot encode action
+                action_onehot = torch.zeros(2 * self.A + 1)
+                action_onehot[action + self.A] = 1.0
+                
+                samples.append({
+                    'input_image': image,
+                    'input_label': input_label,
+                    'action': action,
+                    'action_onehot': action_onehot,
+                    'target_label': target_label
+                })
         
         return samples
     
@@ -146,7 +144,7 @@ class Encoder(nn.Module):
         latent_dim: Dimension of latent vector z
     """
     
-    def __init__(self, input_channels=1, action_dim=5, latent_dim=64):
+    def __init__(self, input_channels=1, action_dim=5, latent_dim=64, n_layers=2):
         super(Encoder, self).__init__()
         
         # Image encoder
@@ -177,11 +175,14 @@ class Encoder(nn.Module):
         )
         
         # Combined encoder
-        self.combined_encoder = nn.Sequential(
-            nn.Linear(256 + 64, 512),
-            nn.LeakyReLU(0.2),
-            nn.Linear(512, latent_dim),
-        )
+        combined_layers = []
+        input_dim = 256 + 64
+        hidden_dim = 512
+        for i in range(n_layers - 1):
+            combined_layers.append(nn.Linear(input_dim if i == 0 else hidden_dim, hidden_dim))
+            combined_layers.append(nn.LeakyReLU(0.2))
+        combined_layers.append(nn.Linear(hidden_dim, latent_dim))
+        self.combined_encoder = nn.Sequential(*combined_layers)
     
     def forward(self, x, a):
         # Encode image
@@ -307,18 +308,30 @@ class MNISTActionGAN:
         # Setup data
         self.setup_data()
         
+        # Initialize loss tracking
+        self.loss_history = {
+            'd_loss': [],
+            'g_loss': [],
+            'real_loss': [],
+            'fake_loss': [],
+            'recon_loss': []
+        }
+        
         print(f"Using device: {self.device}")
         print(f"Number of GPUs: {torch.cuda.device_count()}")
     
     def create_directories(self):
         """Create output directories."""
-        self.checkpoint_dir = "MNIST_small/checkpoints"
-        self.samples_dir = "MNIST_small/samples"
-        self.plots_dir = "MNIST_small/plots"
+        base_dir = f"MNIST_small/{self.args.run_directory}"
+        self.checkpoint_dir = f"{base_dir}/checkpoints"
+        self.samples_dir = f"{base_dir}/samples"
+        self.plots_dir = f"{base_dir}/plots"
         
         os.makedirs(self.checkpoint_dir, exist_ok=True)
         os.makedirs(self.samples_dir, exist_ok=True)
         os.makedirs(self.plots_dir, exist_ok=True)
+        
+        print(f"Results will be saved to: {base_dir}")
     
     def setup_models(self):
         """Initialize encoder, generator, and discriminator."""
@@ -327,7 +340,8 @@ class MNISTActionGAN:
         self.encoder = Encoder(
             input_channels=1,
             action_dim=action_dim,
-            latent_dim=self.args.latent_dim
+            latent_dim=self.args.latent_dim,
+            n_layers=self.args.n_layers
         ).to(self.device)
         
         self.generator = Generator(
@@ -351,6 +365,18 @@ class MNISTActionGAN:
         self.optimizer_E = optim.Adam(self.encoder.parameters(), lr=self.args.lr, betas=(0.5, 0.999))
         self.optimizer_G = optim.Adam(self.generator.parameters(), lr=self.args.lr, betas=(0.5, 0.999))
         self.optimizer_D = optim.Adam(self.discriminator.parameters(), lr=self.args.lr, betas=(0.5, 0.999))
+        
+        # Setup learning rate schedulers
+        if self.args.use_lr_scheduler:
+            self.scheduler_G = optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer_G, mode='min', factor=0.5, patience=10, verbose=True
+            )
+            self.scheduler_D = optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer_D, mode='min', factor=0.5, patience=10, verbose=True
+            )
+        else:
+            self.scheduler_G = None
+            self.scheduler_D = None
     
     def setup_data(self):
         """Setup data loaders."""
@@ -390,7 +416,19 @@ class MNISTActionGAN:
         fake_loss = F.cross_entropy(fake_logits, fake_labels_tensor)
         
         d_loss = real_loss + fake_loss
+        
+        # Add gradient penalty if enabled
+        if self.args.use_gradient_penalty:
+            gp = self._compute_gradient_penalty(real_images, fake_images)
+            d_loss += self.args.gp_weight * gp
+        
+        d_loss = self.args.d_loss_weight * d_loss
         d_loss.backward()
+        
+        # Apply gradient clipping
+        if self.args.gradient_clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.discriminator.parameters(), self.args.gradient_clip)
+        
         self.optimizer_D.step()
         
         return d_loss.item(), real_loss.item(), fake_loss.item()
@@ -412,6 +450,17 @@ class MNISTActionGAN:
         
         total_loss = gan_loss
         
+        # Feature matching loss if enabled
+        if self.args.use_feature_matching:
+            # Get real images for feature matching
+            real_images = self._get_reconstruction_targets(target_labels)
+            real_features = self._extract_discriminator_features(real_images)
+            fake_features = self._extract_discriminator_features(fake_images)
+            fm_loss = F.mse_loss(fake_features, real_features)
+            total_loss += fm_loss
+        else:
+            fm_loss = torch.tensor(0.0)
+        
         # Optional reconstruction loss
         if self.args.lambda_recon > 0:
             # Get random real images from target classes
@@ -421,7 +470,14 @@ class MNISTActionGAN:
         else:
             recon_loss = torch.tensor(0.0)
         
+        total_loss = self.args.g_loss_weight * total_loss
         total_loss.backward()
+        
+        # Apply gradient clipping
+        if self.args.gradient_clip > 0:
+            torch.nn.utils.clip_grad_norm_(self.generator.parameters(), self.args.gradient_clip)
+            torch.nn.utils.clip_grad_norm_(self.encoder.parameters(), self.args.gradient_clip)
+        
         self.optimizer_G.step()
         self.optimizer_E.step()
         
@@ -443,6 +499,41 @@ class MNISTActionGAN:
                 recon_images[i] = self.dataset.samples[random_idx]['input_image']
         
         return recon_images.to(self.device)
+    
+    def _compute_gradient_penalty(self, real_images, fake_images):
+        """Compute gradient penalty for WGAN-GP."""
+        batch_size = real_images.size(0)
+        alpha = torch.rand(batch_size, 1, 1, 1, device=self.device)
+        
+        # Interpolate between real and fake images
+        interpolated = alpha * real_images + (1 - alpha) * fake_images
+        interpolated.requires_grad_(True)
+        
+        # Get discriminator output for interpolated images
+        d_interpolated = self.discriminator(interpolated)
+        
+        # Compute gradients
+        gradients = torch.autograd.grad(
+            outputs=d_interpolated,
+            inputs=interpolated,
+            grad_outputs=torch.ones_like(d_interpolated),
+            create_graph=True,
+            retain_graph=True
+        )[0]
+        
+        # Compute gradient penalty
+        gradients = gradients.view(batch_size, -1)
+        gradient_norm = gradients.norm(2, dim=1)
+        penalty = ((gradient_norm - 1) ** 2).mean()
+        
+        return penalty
+    
+    def _extract_discriminator_features(self, images):
+        """Extract features from discriminator for feature matching."""
+        with torch.no_grad():
+            features = self.discriminator.conv_layers(images)
+            features = features.view(features.size(0), -1)
+        return features
     
     def save_checkpoint(self, epoch):
         """Save model checkpoint and generate visualizations."""
@@ -641,7 +732,7 @@ class MNISTActionGAN:
         # All samples colored by target label
         plt.subplot(1, 2, 1)
         scatter = plt.scatter(latents_2d[:, 0], latents_2d[:, 1], 
-                            c=targets, cmap='tab10', alpha=0.6, s=20)
+                            c=targets, cmap='viridis', alpha=0.6, s=20)
         plt.colorbar(scatter, label='Target Label')
         plt.xlabel(f'PC1 ({pca.explained_variance_ratio_[0]:.2%} variance)')
         plt.ylabel(f'PC2 ({pca.explained_variance_ratio_[1]:.2%} variance)')
@@ -661,7 +752,7 @@ class MNISTActionGAN:
         
         class_means_2d = np.array(class_means_2d)
         scatter = plt.scatter(class_means_2d[:, 0], class_means_2d[:, 1], 
-                            c=range(10), cmap='tab10', s=100, edgecolors='black')
+                            c=range(10), cmap='viridis', s=100, edgecolors='black')
         
         # Add labels
         for i, (x, y) in enumerate(class_means_2d):
@@ -677,6 +768,194 @@ class MNISTActionGAN:
         plt.savefig(os.path.join(self.plots_dir, f'pca_visualization_epoch_{epoch}.png'), 
                    dpi=150, bbox_inches='tight')
         plt.close()
+    
+    def extract_first_pc(self):
+        """Extract the first principal component from the current latent space."""
+        self.encoder.eval()
+        
+        all_latents = []
+        
+        with torch.no_grad():
+            for batch in self.dataloader:
+                input_images, input_labels, actions, target_labels = batch
+                input_images = input_images.to(self.device)
+                actions = actions.to(self.device)
+                
+                # Extract latent vectors
+                z = self.encoder(input_images, actions)
+                all_latents.append(z.cpu().numpy())
+        
+        # Concatenate all latents
+        all_latents = np.concatenate(all_latents, axis=0)
+        
+        # Compute PCA and extract first component
+        pca = PCA(n_components=1)
+        first_pc = pca.fit_transform(all_latents).flatten()
+        
+        # Get the first principal component vector
+        first_pc_vector = pca.components_[0]  # Shape: (latent_dim,)
+        
+        # Compute mean of latent space
+        latent_mean = np.mean(all_latents, axis=0)
+        
+        self.encoder.train()
+        
+        return first_pc_vector, latent_mean, first_pc.min(), first_pc.max()
+    
+    def generate_pc_samples(self, epoch):
+        """Generate samples along the first principal component."""
+        print(f"Generating PC samples for epoch {epoch}...")
+        
+        # Extract first PC information
+        first_pc_vector, latent_mean, pc_min, pc_max = self.extract_first_pc()
+        
+        # Generate samples along the PC
+        pc_values = np.linspace(pc_min, pc_max, self.args.samples_gen_pc)
+        
+        self.encoder.eval()
+        self.generator.eval()
+        
+        generated_images = []
+        
+        with torch.no_grad():
+            for pc_val in pc_values:
+                # Create latent vector by moving along first PC
+                latent_vector = latent_mean + pc_val * first_pc_vector
+                latent_tensor = torch.FloatTensor(latent_vector).unsqueeze(0).to(self.device)
+                
+                # Generate image
+                generated_image = self.generator(latent_tensor)
+                generated_images.append(generated_image.cpu())
+        
+        # Convert to tensor
+        generated_images = torch.cat(generated_images, dim=0)
+        
+        # Plot and save results
+        self._plot_pc_samples(generated_images, pc_values, epoch)
+        
+        self.encoder.train()
+        self.generator.train()
+        
+        print(f"PC samples saved for epoch {epoch}")
+    
+    def _plot_pc_samples(self, generated_images, pc_values, epoch):
+        """Plot generated images along the first principal component."""
+        num_samples = len(generated_images)
+        
+        # Create grid layout
+        cols = min(10, num_samples)  # Max 10 columns
+        rows = (num_samples + cols - 1) // cols  # Ceiling division
+        
+        fig, axes = plt.subplots(rows, cols, figsize=(cols * 2, rows * 2))
+        if rows == 1:
+            axes = axes.reshape(1, -1)
+        elif cols == 1:
+            axes = axes.reshape(-1, 1)
+        
+        for i in range(num_samples):
+            row = i // cols
+            col = i % cols
+            
+            axes[row, col].imshow(generated_images[i].squeeze(), cmap='gray')
+            axes[row, col].set_title(f'PC: {pc_values[i]:.3f}')
+            axes[row, col].axis('off')
+        
+        # Hide unused subplots
+        for i in range(num_samples, rows * cols):
+            row = i // cols
+            col = i % cols
+            axes[row, col].axis('off')
+        
+        plt.suptitle(f'Images Generated Along First Principal Component (Epoch {epoch})', 
+                    fontsize=16)
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.plots_dir, f'pc_samples_epoch_{epoch}.png'), 
+                   dpi=150, bbox_inches='tight')
+        plt.close()
+    
+    def plot_loss_curves(self):
+        """Plot and save loss curves on log scale."""
+        print("Plotting loss curves...")
+        
+        epochs = range(1, len(self.loss_history['d_loss']) + 1)
+        
+        # Create figure with subplots
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+        fig.suptitle('Training Loss Curves (Log Scale)', fontsize=16)
+        
+        # Plot 1: Discriminator vs Generator Loss
+        axes[0, 0].semilogy(epochs, self.loss_history['d_loss'], 'b-', label='Discriminator Loss', linewidth=2)
+        axes[0, 0].semilogy(epochs, self.loss_history['g_loss'], 'r-', label='Generator Loss', linewidth=2)
+        axes[0, 0].set_xlabel('Epoch')
+        axes[0, 0].set_ylabel('Loss (log scale)')
+        axes[0, 0].set_title('Discriminator vs Generator Loss')
+        axes[0, 0].legend()
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        # Plot 2: Real vs Fake Loss
+        axes[0, 1].semilogy(epochs, self.loss_history['real_loss'], 'g-', label='Real Loss', linewidth=2)
+        axes[0, 1].semilogy(epochs, self.loss_history['fake_loss'], 'm-', label='Fake Loss', linewidth=2)
+        axes[0, 1].set_xlabel('Epoch')
+        axes[0, 1].set_ylabel('Loss (log scale)')
+        axes[0, 1].set_title('Real vs Fake Loss')
+        axes[0, 1].legend()
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        # Plot 3: All Losses Combined
+        axes[1, 0].semilogy(epochs, self.loss_history['d_loss'], 'b-', label='Discriminator', linewidth=2)
+        axes[1, 0].semilogy(epochs, self.loss_history['g_loss'], 'r-', label='Generator', linewidth=2)
+        axes[1, 0].semilogy(epochs, self.loss_history['real_loss'], 'g-', label='Real', linewidth=2)
+        axes[1, 0].semilogy(epochs, self.loss_history['fake_loss'], 'm-', label='Fake', linewidth=2)
+        axes[1, 0].set_xlabel('Epoch')
+        axes[1, 0].set_ylabel('Loss (log scale)')
+        axes[1, 0].set_title('All Losses')
+        axes[1, 0].legend()
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        # Plot 4: Reconstruction Loss (if used)
+        if any(loss > 0 for loss in self.loss_history['recon_loss']):
+            axes[1, 1].semilogy(epochs, self.loss_history['recon_loss'], 'c-', label='Reconstruction Loss', linewidth=2)
+            axes[1, 1].set_xlabel('Epoch')
+            axes[1, 1].set_ylabel('Loss (log scale)')
+            axes[1, 1].set_title('Reconstruction Loss')
+            axes[1, 1].legend()
+            axes[1, 1].grid(True, alpha=0.3)
+        else:
+            # If no reconstruction loss, show discriminator loss ratio
+            d_g_ratio = [d/g if g > 0 else 0 for d, g in zip(self.loss_history['d_loss'], self.loss_history['g_loss'])]
+            axes[1, 1].plot(epochs, d_g_ratio, 'k-', label='D/G Ratio', linewidth=2)
+            axes[1, 1].set_xlabel('Epoch')
+            axes[1, 1].set_ylabel('Ratio')
+            axes[1, 1].set_title('Discriminator/Generator Loss Ratio')
+            axes[1, 1].legend()
+            axes[1, 1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.plots_dir, 'loss_curves_log_scale.png'), 
+                   dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        # Also create a single combined plot
+        plt.figure(figsize=(12, 8))
+        plt.semilogy(epochs, self.loss_history['d_loss'], 'b-', label='Discriminator Loss', linewidth=2)
+        plt.semilogy(epochs, self.loss_history['g_loss'], 'r-', label='Generator Loss', linewidth=2)
+        plt.semilogy(epochs, self.loss_history['real_loss'], 'g-', label='Real Loss', linewidth=2)
+        plt.semilogy(epochs, self.loss_history['fake_loss'], 'm-', label='Fake Loss', linewidth=2)
+        
+        if any(loss > 0 for loss in self.loss_history['recon_loss']):
+            plt.semilogy(epochs, self.loss_history['recon_loss'], 'c-', label='Reconstruction Loss', linewidth=2)
+        
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss (log scale)')
+        plt.title('Training Loss Curves (Log Scale)')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(os.path.join(self.plots_dir, 'loss_curves_combined_log_scale.png'), 
+                   dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print("Loss curves saved successfully!")
     
     def train(self):
         """Main training loop."""
@@ -696,14 +975,15 @@ class MNISTActionGAN:
                 actions = actions.to(self.device)
                 target_labels = target_labels.to(self.device)
                 
-                # Train discriminator
-                with torch.no_grad():
-                    z = self.encoder(input_images, actions)
-                    fake_images = self.generator(z)
-                
-                d_loss, real_loss, fake_loss = self.train_discriminator(
-                    input_images, input_labels, fake_images, target_labels
-                )
+                # Train discriminator multiple times per generator update
+                for _ in range(self.args.d_train_ratio):
+                    with torch.no_grad():
+                        z = self.encoder(input_images, actions)
+                        fake_images = self.generator(z)
+                    
+                    d_loss, real_loss, fake_loss = self.train_discriminator(
+                        input_images, input_labels, fake_images, target_labels
+                    )
                 
                 # Train generator and encoder
                 g_loss, gan_loss, recon_loss = self.train_generator_encoder(
@@ -725,6 +1005,13 @@ class MNISTActionGAN:
             epoch_fake_loss /= num_batches
             epoch_recon_loss /= num_batches
             
+            # Store loss history
+            self.loss_history['d_loss'].append(epoch_d_loss)
+            self.loss_history['g_loss'].append(epoch_g_loss)
+            self.loss_history['real_loss'].append(epoch_real_loss)
+            self.loss_history['fake_loss'].append(epoch_fake_loss)
+            self.loss_history['recon_loss'].append(epoch_recon_loss)
+            
             # Print progress
             print(f"Epoch {epoch+1}/{self.args.epochs}: "
                   f"D_loss: {epoch_d_loss:.4f}, G_loss: {epoch_g_loss:.4f}, "
@@ -734,8 +1021,75 @@ class MNISTActionGAN:
             # Save checkpoint
             if (epoch + 1) % self.args.checkpoint_interval == 0:
                 self.save_checkpoint(epoch + 1)
+            
+            # Generate PC samples
+            if (epoch + 1) % self.args.pc_sampling_interval == 0:
+                self.generate_pc_samples(epoch + 1)
+            
+            # Update learning rates
+            if self.scheduler_G is not None:
+                self.scheduler_G.step(epoch_g_loss)
+            if self.scheduler_D is not None:
+                self.scheduler_D.step(epoch_d_loss)
         
         print("Training completed!")
+        
+        # Plot loss curves at the end of training
+        self.plot_loss_curves()
+    
+    def run_pc_sampling(self, epoch=None):
+        """Standalone function to run PC sampling on current model."""
+        if epoch is None:
+            epoch = self.args.epochs
+        print(f"Running PC sampling for epoch {epoch}...")
+        self.generate_pc_samples(epoch)
+    
+    def load_checkpoint(self, checkpoint_path):
+        """Load model checkpoint, handling DataParallel models."""
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        
+        # Handle DataParallel models
+        encoder_state = checkpoint['encoder_state_dict']
+        generator_state = checkpoint['generator_state_dict']
+        discriminator_state = checkpoint['discriminator_state_dict']
+        
+        # Check if current models are wrapped with DataParallel
+        current_encoder_is_parallel = isinstance(self.encoder, DataParallel)
+        current_generator_is_parallel = isinstance(self.generator, DataParallel)
+        current_discriminator_is_parallel = isinstance(self.discriminator, DataParallel)
+        
+        # Check if checkpoint was saved with DataParallel
+        checkpoint_encoder_is_parallel = any(key.startswith('module.') for key in encoder_state.keys())
+        checkpoint_generator_is_parallel = any(key.startswith('module.') for key in generator_state.keys())
+        checkpoint_discriminator_is_parallel = any(key.startswith('module.') for key in discriminator_state.keys())
+        
+        # Adjust state dict keys based on current model architecture
+        if checkpoint_encoder_is_parallel and not current_encoder_is_parallel:
+            # Remove 'module.' prefix
+            encoder_state = {k[7:]: v for k, v in encoder_state.items()}
+        elif not checkpoint_encoder_is_parallel and current_encoder_is_parallel:
+            # Add 'module.' prefix
+            encoder_state = {f'module.{k}': v for k, v in encoder_state.items()}
+            
+        if checkpoint_generator_is_parallel and not current_generator_is_parallel:
+            # Remove 'module.' prefix
+            generator_state = {k[7:]: v for k, v in generator_state.items()}
+        elif not checkpoint_generator_is_parallel and current_generator_is_parallel:
+            # Add 'module.' prefix
+            generator_state = {f'module.{k}': v for k, v in generator_state.items()}
+            
+        if checkpoint_discriminator_is_parallel and not current_discriminator_is_parallel:
+            # Remove 'module.' prefix
+            discriminator_state = {k[7:]: v for k, v in discriminator_state.items()}
+        elif not checkpoint_discriminator_is_parallel and current_discriminator_is_parallel:
+            # Add 'module.' prefix
+            discriminator_state = {f'module.{k}': v for k, v in discriminator_state.items()}
+        
+        self.encoder.load_state_dict(encoder_state)
+        self.generator.load_state_dict(generator_state)
+        self.discriminator.load_state_dict(discriminator_state)
+        
+        print(f"Checkpoint loaded successfully from {checkpoint_path}")
 
 
 def main():
@@ -743,9 +1097,9 @@ def main():
     parser = argparse.ArgumentParser(description='Train MNIST Action GAN')
     
     # Dataset parameters
-    parser.add_argument('--N', type=int, default=10, 
+    parser.add_argument('--N', type=int, default=20, 
                        help='Number of samples per digit class (default: 10)')
-    parser.add_argument('--A', type=int, default=2, 
+    parser.add_argument('--A', type=int, default=5, 
                        help='Action range [-A, A] (default: 2)')
     parser.add_argument('--cyclic', type=bool, default=False, 
                        help='Use cyclic addition mod 10 (default: False)')
@@ -769,6 +1123,38 @@ def main():
                        help='Reconstruction loss weight (default: 0.0)')
     parser.add_argument('--seed', type=int, default=42, 
                        help='Random seed (default: 42)')
+    parser.add_argument('--n_layers', type=int, default=2, 
+                       help='Number of layers for combined encoder (default: 2)')
+    
+    # PC sampling parameters
+    parser.add_argument('--samples_gen_pc', type=int, default=20, 
+                       help='Number of samples to generate along first PC (default: 20)')
+    parser.add_argument('--pc_sampling_interval', type=int, default=20, 
+                       help='Interval for PC sampling during training (default: 20)')
+    parser.add_argument('--pc_only', action='store_true', 
+                       help='Run only PC sampling (requires existing checkpoint)')
+    parser.add_argument('--checkpoint_path', type=str, default=None,
+                       help='Path to checkpoint for PC-only mode')
+    parser.add_argument('--run_directory', type=str, default='default',
+                       help='Directory name for organizing results (default: default)')
+    
+    # Training stabilization parameters
+    parser.add_argument('--use_lr_scheduler', action='store_true',
+                       help='Use learning rate scheduler for generator')
+    parser.add_argument('--gradient_clip', type=float, default=0.0,
+                       help='Gradient clipping threshold (0 = no clipping)')
+    parser.add_argument('--d_loss_weight', type=float, default=1.0,
+                       help='Discriminator loss weight (default: 1.0)')
+    parser.add_argument('--g_loss_weight', type=float, default=1.0,
+                       help='Generator loss weight (default: 1.0)')
+    parser.add_argument('--use_feature_matching', action='store_true',
+                       help='Use feature matching loss for generator')
+    parser.add_argument('--use_gradient_penalty', action='store_true',
+                       help='Use gradient penalty for discriminator')
+    parser.add_argument('--gp_weight', type=float, default=10.0,
+                       help='Gradient penalty weight (default: 10.0)')
+    parser.add_argument('--d_train_ratio', type=int, default=1,
+                       help='Number of discriminator updates per generator update (default: 1)')
     
     args = parser.parse_args()
     
@@ -778,9 +1164,37 @@ def main():
         print(f"  {arg}: {value}")
     print()
     
-    # Create and train model
+    # Create model
     model = MNISTActionGAN(args)
-    model.train()
+    
+    if args.pc_only:
+        # Load checkpoint if specified
+        if args.checkpoint_path:
+            if os.path.exists(args.checkpoint_path):
+                model.load_checkpoint(args.checkpoint_path)
+            else:
+                print(f"Checkpoint not found at {args.checkpoint_path}")
+                return
+        else:
+            # Find the latest checkpoint in the specified run directory
+            if os.path.exists(model.checkpoint_dir):
+                checkpoint_files = [f for f in os.listdir(model.checkpoint_dir) if f.startswith('checkpoint_epoch_')]
+                if checkpoint_files:
+                    latest_checkpoint = max(checkpoint_files, key=lambda x: int(x.split('_')[-1].split('.')[0]))
+                    checkpoint_path = os.path.join(model.checkpoint_dir, latest_checkpoint)
+                    model.load_checkpoint(checkpoint_path)
+                else:
+                    print(f"No checkpoints found in {model.checkpoint_dir}. Please train the model first or specify a checkpoint path.")
+                    return
+            else:
+                print(f"Checkpoint directory {model.checkpoint_dir} does not exist. Please train the model first or specify a checkpoint path.")
+                return
+        
+        # Run PC sampling
+        model.run_pc_sampling()
+    else:
+        # Train model
+        model.train()
 
 
 if __name__ == '__main__':
