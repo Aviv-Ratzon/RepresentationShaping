@@ -569,6 +569,8 @@ class MNISTActionGAN:
         
         # Analyze latent space
         self.analyze_latent_space(epoch)
+
+        self.plot_loss_curves()
         
         print(f"Checkpoint saved at epoch {epoch}")
     
