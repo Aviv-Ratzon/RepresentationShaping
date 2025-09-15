@@ -362,9 +362,13 @@ class MNISTActionGAN:
     
     def setup_optimizers(self):
         """Setup optimizers for all models."""
-        self.optimizer_E = optim.Adam(self.encoder.parameters(), lr=self.args.lr, betas=(0.5, 0.999))
-        self.optimizer_G = optim.Adam(self.generator.parameters(), lr=self.args.lr, betas=(0.5, 0.999))
-        self.optimizer_D = optim.Adam(self.discriminator.parameters(), lr=self.args.lr, betas=(0.5, 0.999))
+        # Use different learning rates if specified
+        g_lr = self.args.g_lr if self.args.g_lr is not None else self.args.lr
+        d_lr = self.args.d_lr if self.args.d_lr is not None else self.args.lr
+        
+        self.optimizer_E = optim.Adam(self.encoder.parameters(), lr=g_lr, betas=(0.5, 0.999))
+        self.optimizer_G = optim.Adam(self.generator.parameters(), lr=g_lr, betas=(0.5, 0.999))
+        self.optimizer_D = optim.Adam(self.discriminator.parameters(), lr=d_lr, betas=(0.5, 0.999))
         
         # Setup learning rate schedulers
         if self.args.use_lr_scheduler:
@@ -444,11 +448,20 @@ class MNISTActionGAN:
         # Generate fake images
         fake_images = self.generator(z)
         
-        # Discriminator loss: fake images should be classified as target labels
+        # Standard GAN loss: fake images should be classified as real (not fake)
         fake_logits = self.discriminator(fake_images)
-        gan_loss = F.cross_entropy(fake_logits, target_labels)
+        fake_labels_tensor = torch.full((fake_logits.size(0),), 10, dtype=torch.long, device=self.device)
         
-        total_loss = gan_loss
+        # Generator wants to fool discriminator (make fake images look real)
+        # So we want fake_logits to NOT be classified as class 10 (fake)
+        gan_loss = F.cross_entropy(fake_logits, target_labels)  # Original loss for digit classification
+        
+        # Add adversarial loss: generator wants discriminator to think fake images are real
+        # We want the "fake" probability (class 10) to be low
+        fake_prob = F.softmax(fake_logits, dim=1)[:, 10]  # Probability of being fake
+        adversarial_loss = fake_prob.mean()  # Minimize probability of being fake
+        
+        total_loss = gan_loss + self.args.adversarial_weight * adversarial_loss
         
         # Feature matching loss if enabled
         if self.args.use_feature_matching:
@@ -457,7 +470,7 @@ class MNISTActionGAN:
             real_features = self._extract_discriminator_features(real_images)
             fake_features = self._extract_discriminator_features(fake_images)
             fm_loss = F.mse_loss(fake_features, real_features)
-            total_loss += fm_loss
+            total_loss += self.args.feature_matching_weight * fm_loss
         else:
             fm_loss = torch.tensor(0.0)
         
@@ -976,8 +989,17 @@ class MNISTActionGAN:
                 actions = actions.to(self.device)
                 target_labels = target_labels.to(self.device)
                 
+                # Determine discriminator training ratio
+                if self.args.adaptive_d_train_ratio and len(self.loss_history['d_loss']) > 0:
+                    # Use recent losses to determine training ratio
+                    recent_d_loss = np.mean(self.loss_history['d_loss'][-5:]) if len(self.loss_history['d_loss']) >= 5 else self.loss_history['d_loss'][-1]
+                    recent_g_loss = np.mean(self.loss_history['g_loss'][-5:]) if len(self.loss_history['g_loss']) >= 5 else self.loss_history['g_loss'][-1]
+                    d_train_ratio = self.get_adaptive_d_train_ratio(recent_d_loss, recent_g_loss)
+                else:
+                    d_train_ratio = self.args.d_train_ratio
+                
                 # Train discriminator multiple times per generator update
-                for _ in range(self.args.d_train_ratio):
+                for _ in range(d_train_ratio):
                     with torch.no_grad():
                         z = self.encoder(input_images, actions)
                         fake_images = self.generator(z)
@@ -1018,6 +1040,9 @@ class MNISTActionGAN:
                   f"D_loss: {epoch_d_loss:.4f}, G_loss: {epoch_g_loss:.4f}, "
                   f"Real_loss: {epoch_real_loss:.4f}, Fake_loss: {epoch_fake_loss:.4f}, "
                   f"Recon_loss: {epoch_recon_loss:.4f}")
+            
+            # Check training stability
+            self.check_training_stability(epoch + 1)
             
             # Save checkpoint
             if (epoch + 1) % self.args.checkpoint_interval == 0:
@@ -1066,6 +1091,23 @@ class MNISTActionGAN:
         
         print("All plotting functions completed!")
     
+    def get_adaptive_d_train_ratio(self, d_loss, g_loss):
+        """Calculate adaptive discriminator training ratio based on loss balance."""
+        if g_loss == 0:
+            return 1
+        
+        current_ratio = d_loss / g_loss
+        target_ratio = self.args.target_d_g_ratio
+        
+        if current_ratio < target_ratio * 0.5:
+            # Discriminator is too weak, train it more
+            return min(5, self.args.d_train_ratio * 2)
+        elif current_ratio > target_ratio * 2:
+            # Discriminator is too strong, train it less
+            return max(1, self.args.d_train_ratio // 2)
+        else:
+            return self.args.d_train_ratio
+    
     def load_checkpoint(self, checkpoint_path):
         """Load model checkpoint, handling DataParallel models."""
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
@@ -1112,6 +1154,36 @@ class MNISTActionGAN:
         self.discriminator.load_state_dict(discriminator_state)
         
         print(f"Checkpoint loaded successfully from {checkpoint_path}")
+    
+    def check_training_stability(self, epoch):
+        """Check training stability and suggest adjustments."""
+        if len(self.loss_history['d_loss']) < 10:
+            return
+        
+        # Check for increasing losses
+        recent_d_losses = self.loss_history['d_loss'][-10:]
+        recent_g_losses = self.loss_history['g_loss'][-10:]
+        
+        d_trend = np.polyfit(range(len(recent_d_losses)), recent_d_losses, 1)[0]
+        g_trend = np.polyfit(range(len(recent_g_losses)), recent_g_losses, 1)[0]
+        
+        # Check for mode collapse (discriminator loss very low)
+        if recent_d_losses[-1] < 0.1:
+            print(f"Warning: Discriminator loss very low ({recent_d_losses[-1]:.4f}) - possible mode collapse")
+        
+        # Check for discriminator overpowering generator
+        if recent_d_losses[-1] < recent_g_losses[-1] * 0.1:
+            print(f"Warning: Discriminator much stronger than generator (D: {recent_d_losses[-1]:.4f}, G: {recent_g_losses[-1]:.4f})")
+        
+        # Check for both losses increasing
+        if d_trend > 0 and g_trend > 0:
+            print(f"Warning: Both discriminator and generator losses increasing (D trend: {d_trend:.4f}, G trend: {g_trend:.4f})")
+        
+        # Check for oscillation
+        d_std = np.std(recent_d_losses)
+        g_std = np.std(recent_g_losses)
+        if d_std > np.mean(recent_d_losses) * 0.5 or g_std > np.mean(recent_g_losses) * 0.5:
+            print(f"Warning: High loss variance detected (D std: {d_std:.4f}, G std: {g_std:.4f})")
 
 
 def main():
@@ -1177,6 +1249,20 @@ def main():
                        help='Gradient penalty weight (default: 10.0)')
     parser.add_argument('--d_train_ratio', type=int, default=1,
                        help='Number of discriminator updates per generator update (default: 1)')
+    
+    # Additional training balance parameters
+    parser.add_argument('--adversarial_weight', type=float, default=0.1,
+                       help='Weight for adversarial loss in generator (default: 0.1)')
+    parser.add_argument('--feature_matching_weight', type=float, default=1.0,
+                       help='Weight for feature matching loss (default: 1.0)')
+    parser.add_argument('--d_lr', type=float, default=None,
+                       help='Discriminator learning rate (default: same as generator)')
+    parser.add_argument('--g_lr', type=float, default=None,
+                       help='Generator learning rate (default: same as discriminator)')
+    parser.add_argument('--adaptive_d_train_ratio', action='store_true',
+                       help='Adaptively adjust discriminator training ratio based on loss balance')
+    parser.add_argument('--target_d_g_ratio', type=float, default=1.0,
+                       help='Target discriminator/generator loss ratio for adaptive training (default: 1.0)')
     
     args = parser.parse_args()
     
