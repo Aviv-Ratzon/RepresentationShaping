@@ -710,7 +710,7 @@ class MNISTActionGAN:
                    yticklabels=range(10),
                    cmap='viridis', 
                    square=True,
-                   annot=True, 
+                   annot=False, 
                    fmt='.2f')
         plt.title(f'Distance Matrix of Class-Mean Latent Vectors (Epoch {epoch})')
         plt.xlabel('Digit Class')
@@ -1044,6 +1044,27 @@ class MNISTActionGAN:
         print(f"Running PC sampling for epoch {epoch}...")
         self.generate_pc_samples(epoch)
     
+    def run_all_plots(self, epoch=None):
+        """Run all plotting functions on current model."""
+        if epoch is None:
+            epoch = self.args.epochs
+        print(f"Running all plotting functions for epoch {epoch}...")
+        
+        # Generate sample grids
+        self.generate_sample_grids(epoch)
+        
+        # Analyze latent space
+        self.analyze_latent_space(epoch)
+        
+        # Generate PC samples
+        self.generate_pc_samples(epoch)
+        
+        # Plot loss curves (if loss history exists)
+        if self.loss_history['d_loss']:
+            self.plot_loss_curves()
+        
+        print("All plotting functions completed!")
+    
     def load_checkpoint(self, checkpoint_path):
         """Load model checkpoint, handling DataParallel models."""
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
@@ -1131,10 +1152,10 @@ def main():
                        help='Number of samples to generate along first PC (default: 20)')
     parser.add_argument('--pc_sampling_interval', type=int, default=20, 
                        help='Interval for PC sampling during training (default: 20)')
-    parser.add_argument('--pc_only', action='store_true', 
-                       help='Run only PC sampling (requires existing checkpoint)')
+    parser.add_argument('--plot_only', action='store_true', 
+                       help='Run only plotting functions without training (requires existing checkpoint)')
     parser.add_argument('--checkpoint_path', type=str, default=None,
-                       help='Path to checkpoint for PC-only mode')
+                       help='Path to checkpoint for plot-only mode')
     parser.add_argument('--run_directory', type=str, default='default',
                        help='Directory name for organizing results (default: default)')
     
@@ -1167,7 +1188,7 @@ def main():
     # Create model
     model = MNISTActionGAN(args)
     
-    if args.pc_only:
+    if args.plot_only:
         # Load checkpoint if specified
         if args.checkpoint_path:
             if os.path.exists(args.checkpoint_path):
@@ -1190,8 +1211,8 @@ def main():
                 print(f"Checkpoint directory {model.checkpoint_dir} does not exist. Please train the model first or specify a checkpoint path.")
                 return
         
-        # Run PC sampling
-        model.run_pc_sampling()
+        # Run all plotting functions
+        model.run_all_plots()
     else:
         # Train model
         model.train()
