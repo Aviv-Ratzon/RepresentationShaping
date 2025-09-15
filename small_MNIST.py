@@ -674,6 +674,7 @@ class MNISTActionGAN:
         
         # Compute pairwise distances
         distances = euclidean_distances(latents_subset)
+        distances = distances[targets_subset.argsort(), :][:, targets_subset.argsort()]
         
         # Create plot
         plt.figure(figsize=(10, 8))
