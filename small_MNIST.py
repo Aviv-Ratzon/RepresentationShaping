@@ -753,6 +753,7 @@ class MNISTActionGAN:
         plt.xlabel(f'PC1 ({pca.explained_variance_ratio_[0]:.2%} variance)')
         plt.ylabel(f'PC2 ({pca.explained_variance_ratio_[1]:.2%} variance)')
         plt.title(f'PCA of All Latent Vectors (Epoch {epoch})')
+        plt.axis('equal')
         plt.grid(True, alpha=0.3)
         
         # Class means
@@ -778,6 +779,7 @@ class MNISTActionGAN:
         plt.xlabel(f'PC1 ({pca.explained_variance_ratio_[0]:.2%} variance)')
         plt.ylabel(f'PC2 ({pca.explained_variance_ratio_[1]:.2%} variance)')
         plt.title(f'PCA of Class-Mean Latent Vectors (Epoch {epoch})')
+        plt.axis('equal')
         plt.grid(True, alpha=0.3)
         
         plt.tight_layout()
