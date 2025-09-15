@@ -415,6 +415,8 @@ def create_data_non_linear_fn(C):
         C.continuous_function = True  # Whether to use continuous or piecewise continuous function
     if not hasattr(C, 'discrete_actions'):
         C.discrete_actions = False  # Whether to use discrete actions
+    if not hasattr(C, 'action_dist'):
+        C.action_dist = 'uniform'  # Whether to use discrete actions
     
     # Generate random parameter values s
     if C.discrete_samples:
@@ -426,7 +428,16 @@ def create_data_non_linear_fn(C):
         actions = a_grid.ravel()
     else:
         s_values = np.random.uniform(C.s_range[0], C.s_range[1], C.num_samples)
-        actions = np.random.uniform(-C.max_move, C.max_move, C.num_samples)
+        if C.action_dist == 'uniform':
+            actions = np.random.uniform(-C.max_move, C.max_move, C.num_samples)
+        elif C.action_dist == 'normal':
+            actions = np.random.normal(0, C.max_move, C.num_samples)
+        elif C.action_dist == 'lognormal':
+            actions = np.random.lognormal(0, C.max_move, C.num_samples)
+        elif C.action_dist == 'poisson':
+            actions = np.random.poisson(C.max_move, C.num_samples)
+        else:
+            raise ValueError(f"Invalid action distribution: {C.action_dist}")
 
     if C.discrete_actions:
         action_idx = np.random.choice(2*C.n_actions + 1, C.num_samples)
