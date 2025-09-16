@@ -20,8 +20,8 @@ import shutil
 C = Config()
 C.G = 1
 C.linear_net = True
-C.learning_rate = 0.001
-C.length_corridors = [30]*1
+C.learning_rate = 0.1
+C.length_corridors = [20]*1
 C.hidden_size = len(C.length_corridors) * (C.length_corridors[0] * 3 - 1)
 C.num_epochs = 1000000
 C.algo_name = 'Adam'
@@ -29,9 +29,9 @@ C.loss_fn = nn.CrossEntropyLoss()
 
 # Sweep variables
 var_name1 = 'max_move'
-var_values1 = [23] #np.arange(1, C.length_corridors[0])
+var_values1 = np.arange(1, C.length_corridors[0])
 var_name2 = 'L'
-var_values2 = [9] #np.arange(10)
+var_values2 = np.arange(10)
 
 # Prepare output directory
 output_dir = "results/sweep_L_A"
@@ -47,7 +47,7 @@ def run_and_save(idx, v1, v2):
     setattr(C_local, var_name2, v2)
     C_local.gpu_id = idx % 8
     # Set learning rate as specified
-    # C_local.learning_rate = C.learning_rate * (0.9 ** ((v2+v1)/2))
+    C_local.learning_rate = C.learning_rate * (0.5 ** ((v2+v1)/2))
     # Run simulation
     data_dict = run_sim_wrapper(C_local)
     # Save result

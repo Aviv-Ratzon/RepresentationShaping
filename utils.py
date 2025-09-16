@@ -212,8 +212,7 @@ def calc_NC1_from_data_dict(data_dict):
 
 def calc_PR(h):
     cov = compute_covariance(h)
-    eigenvalues = np.linalg.eigvalsh(cov)
-    eigenvalues = np.sort(eigenvalues)[::-1]
+    eigenvalues = np.linalg.eig(cov)[0]
     return np.sum(eigenvalues)**2 / np.sum(eigenvalues**2)
 
 
