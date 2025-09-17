@@ -943,8 +943,6 @@ def create_data_2d_euclidean(C):
     deltas = []
     for dx in range(-C.max_move, C.max_move + 1):
         for dy in range(-C.max_move, C.max_move + 1):
-            if dx == 0 and dy == 0:
-                continue
             if C.action_shape == 'circle':
                 if dx*dx + dy*dy <= C.max_move * C.max_move:
                     deltas.append((dx, dy))
