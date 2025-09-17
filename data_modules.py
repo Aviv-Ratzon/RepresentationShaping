@@ -944,7 +944,7 @@ def create_data_2d_euclidean(C):
     for dx in range(-C.max_move, C.max_move + 1):
         for dy in range(-C.max_move, C.max_move + 1):
             if C.action_shape == 'circle':
-                if np.sqrt(abs(dx) + abs(dy)) <= C.max_move:
+                if np.sqrt(dx**2 + dy**2) <= C.max_move:
                     deltas.append((dx, dy))
             else:  # square
                 deltas.append((dx, dy))
