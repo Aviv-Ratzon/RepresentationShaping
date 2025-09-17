@@ -653,8 +653,8 @@ class MNISTActionGAN:
                 
                 # Extract latent vectors
                 z = self.encoder(input_images, actions)
-                all_latents.append(z.cpu().numpy())
-                all_targets.append(target_labels.numpy())
+                all_latents.append(z.cpu().numpy()[abs(actions)<=1])
+                all_targets.append(target_labels.numpy()[abs(actions)<=1])
         
         # Concatenate all latents and targets
         all_latents = np.concatenate(all_latents, axis=0)
