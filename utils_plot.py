@@ -45,6 +45,8 @@ def plot_pca(data_dict, title="", axs=None):
     hidden = hidden_states[-1].cpu().detach().numpy()
     hidden_dist = torch.cdist(hidden_states[-1], hidden_states[-1]).cpu().numpy()
 
+    color = loc_y if C.corridor_dim == 1 else loc_y[:, 0]
+
     PR = calc_PR(hidden)
     if not C.bias:
         W_effective = get_effective_W_from_model_dict(final_weights).cpu().numpy()
@@ -58,7 +60,7 @@ def plot_pca(data_dict, title="", axs=None):
     hidden_pr = calc_PR(hidden)
     
     # alignment = alignment_score(hidden[corridor==0], hidden[corridor==1]) if n_corridors > 1 else 0
-    order = get_r_2(PCA(n_components=1).fit_transform(hidden), loc_y)
+    order = get_r_2(PCA(n_components=C.corridor_dim).fit_transform(hidden), loc_y)
 
     pca = PCA().fit(hidden)
     X_reduced = pca.transform(hidden)
@@ -75,13 +77,13 @@ def plot_pca(data_dict, title="", axs=None):
     
     ax1 = axs[1]
     for cor, marker in zip(np.unique(corridor), markers):
-        ax1.scatter(X_reduced[corridor==cor, 0], X_reduced[corridor==cor, 1], c=loc_y[corridor==cor], cmap='coolwarm', alpha=0.7, marker=marker)
+        ax1.scatter(X_reduced[corridor==cor, 0], X_reduced[corridor==cor, 1], c=color[corridor==cor], cmap='coolwarm', alpha=0.7, marker=marker)
     ax1.set_xlabel(f'Component 1')
     ax1.set_ylabel(f'Component 2'),
     ax1.axis('equal')
 
     ax1 = axs[2]
-    ax1.scatter(X_reduced[:, 0], loc_y, c=loc_y)
+    ax1.scatter(X_reduced[:, 0], color, c=color)
 
     axs[3].plot(loss_l)
     axs[3].set_yscale('log')

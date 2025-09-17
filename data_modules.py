@@ -23,7 +23,10 @@ class action_handler:
     def __init__(self, C):
         n_cors = len(C.length_corridors)
         cor_dim = C.corridor_dim
-        actions = np.concatenate([np.arange(-C.max_move, -C.min_move + 1), np.arange(C.min_move, C.max_move + 1)])
+        if hasattr(C, 'action_list'):
+            actions = C.action_list
+        else:
+            actions = np.concatenate([np.arange(-C.max_move, -C.min_move + 1), np.arange(C.min_move, C.max_move + 1)])
         actions = np.unique(actions)
         if C.allow_backwards:
             run_actions = actions
@@ -891,6 +894,157 @@ def create_data_mnist(C):
     return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, action_dim
 
 
+# 2D Euclidean grid with local neighborhood actions (square/circle)
+def create_data_2d_euclidean(C):
+    """
+    Create data for a 2D Euclidean grid.
+
+    - States live on a 2D grid of size L x L where L = C.length_corridors (int)
+    - Actions are displacements (dx, dy) to neighboring locations defined by:
+        * square: |dx| <= C.max_move, |dy| <= C.max_move, excluding (0,0)
+        * circle: dx^2 + dy^2 <= C.max_move^2, excluding (0,0)
+      Controlled by C.action_shape in {'square', 'circle'}
+    - If C.cyclic_corridors: moves wrap around modulo L; otherwise moves outside bounds are skipped
+    - Inputs are [state_encoding, action_encoding]
+    - Targets are next state's encoding
+    - Returns module-standard tuple
+    """
+    # Defaults
+    if not hasattr(C, 'length_corridors'):
+        C.length_corridors = 10
+    if isinstance(C.length_corridors, (list, tuple)):
+        L = C.length_corridors[0]
+    else:
+        L = int(C.length_corridors)
+    if not hasattr(C, 'max_move'):
+        C.max_move = 1
+    if not hasattr(C, 'min_move'):
+        C.min_move = 0
+    if not hasattr(C, 'action_shape'):
+        C.action_shape = 'square'  # or 'circle'
+    if not hasattr(C, 'one_hot_actions'):
+        C.one_hot_actions = True
+    if not hasattr(C, 'one_hot_inputs'):
+        C.one_hot_inputs = True
+    if not hasattr(C, 'input_size'):
+        C.input_size = 16
+    if not hasattr(C, 'input_smoothing'):
+        C.input_smoothing = 0.1
+    if not hasattr(C, 'cyclic_corridors'):
+        C.cyclic_corridors = False
+    if not hasattr(C, 'mask_states'):
+        C.mask_states = None
+    if not hasattr(C, 'whiten_data'):
+        C.whiten_data = False
+    if not hasattr(C, 'print_progress'):
+        C.print_progress = False
+
+    # Build action set
+    deltas = []
+    for dx in range(-C.max_move, C.max_move + 1):
+        for dy in range(-C.max_move, C.max_move + 1):
+            if dx == 0 and dy == 0:
+                continue
+            if C.action_shape == 'circle':
+                if dx*dx + dy*dy <= C.max_move * C.max_move:
+                    deltas.append((dx, dy))
+            else:  # square
+                deltas.append((dx, dy))
+    # Enforce min_move if specified (>0 excludes small steps)
+    if C.min_move > 0:
+        deltas = [(dx, dy) for (dx, dy) in deltas if (abs(dx) >= C.min_move or abs(dy) >= C.min_move)]
+
+    action_space = np.array(deltas, dtype=int)
+    n_actions = action_space.shape[0]
+
+    # State encodings
+    N_inputs = L * L
+    if C.one_hot_inputs:
+        input_size = N_inputs
+        output_size = N_inputs
+        # One-hot per state index i = x*L + y
+        # We will generate on-the-fly via indexing; no huge matrix necessary
+        def state_vec(x, y):
+            idx = x * L + y
+            v = np.zeros(N_inputs, dtype=np.float32)
+            v[idx] = 1.0
+            return v
+    else:
+        input_size = C.input_size
+        output_size = C.input_size
+        grid = gaussian_filter(
+            np.random.normal(size=(L * 3, L * 3, C.input_size)),
+            sigma=[L * C.input_smoothing, L * C.input_smoothing, 0]
+        )[L:-L, L:-L]
+        grid = grid - grid.mean(axis=(0, 1), keepdims=True)
+        grid = grid / grid.std(axis=(0, 1), keepdims=True)
+        def state_vec(x, y):
+            return grid[x, y].astype(np.float32)
+
+    # Action encodings
+    if C.one_hot_actions:
+        actions_in = np.eye(n_actions, dtype=np.float32)
+    else:
+        rng_embed = np.random.default_rng(0)
+        actions_in = rng_embed.normal(0, 1, size=(n_actions, n_actions)).astype(np.float32)
+
+    # Generate dataset over all states and actions
+    X = []
+    y = []
+    loc_X = []
+    loc_y = []
+    corridor = []
+    action_taken = []
+    dim_l = []  # Not used in 2D displacement setting; keep zeros for interface
+
+    for x in range(L):
+        for y_pos in range(L):
+            # Skip masked states if provided
+            if C.mask_states and (x, y_pos) in C.mask_states:
+                continue
+            v = state_vec(x, y_pos)
+            for a_idx, (dx, dy) in enumerate(action_space):
+                nx = x + dx
+                ny = y_pos + dy
+                if C.cyclic_corridors:
+                    nx %= L
+                    ny %= L
+                else:
+                    if nx < 0 or nx >= L or ny < 0 or ny >= L:
+                        continue
+                # Skip transitions to masked states
+                if C.mask_states and (nx, ny) in C.mask_states:
+                    continue
+                v_next = state_vec(nx, ny)
+
+                corridor.append(0)
+                dim_l.append(0)
+                loc_X.append((x, y_pos))
+                loc_y.append((nx, ny))
+                X.append(np.concatenate([v, actions_in[a_idx]], axis=0))
+                y.append(v_next)
+                action_taken.append((dx, dy))
+
+    X = np.array(X, dtype=np.float32)
+    y = np.array(y, dtype=np.float32)
+    corridor = np.array(corridor, dtype=int)
+    loc_X = np.array(loc_X)
+    loc_y = np.array(loc_y)
+    action_taken = np.array(action_taken)
+    dim_l = np.array(dim_l, dtype=int)
+
+    if C.whiten_data:
+        pca = PCA(whiten=True)
+        X = pca.fit_transform(X)
+
+    if C.print_progress:
+        shape = 'circle' if C.action_shape == 'circle' else 'square'
+        print(f'2D Euclidean grid L={L}, action_shape={shape}, max_move={C.max_move}')
+        print(f'Number of actions: {n_actions}, number of samples: {X.shape[0]}')
+        print(f'Input dim: {X.shape[1]} (state {input_size} + action {n_actions if C.one_hot_actions else n_actions})')
+
+    return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
+
 # Dictionary mapping data geometry types to their corresponding create_data functions
 DATA_GEOMETRY_FUNCTIONS = {
     'euclidean': create_data_euclidean,
@@ -900,6 +1054,7 @@ DATA_GEOMETRY_FUNCTIONS = {
     'uneven_corridors': create_data_uneven_corridors,
     'MNIST': create_data_mnist,
     'mnist': create_data_mnist,
+    '2d_euclidean': create_data_2d_euclidean,
 }
 
 
