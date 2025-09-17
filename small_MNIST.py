@@ -649,7 +649,7 @@ class MNISTActionGAN:
             for batch in self.dataloader:
                 input_images, input_labels, actions, target_labels = batch
                 input_images = input_images.to(self.device)
-                actions = actions.to(self.device)
+                actions = target_labels - input_labels
                 
                 # Extract latent vectors
                 z = self.encoder(input_images, actions)
