@@ -32,7 +32,7 @@ C.loss_fn = nn.MSELoss()
 var_name1 = 'max_move'
 var_values1 = np.arange(1, C.length_corridors[0])
 var_name2 = 'length_corridors'
-var_values2 = [[S] for i in np.arange(10, 50)]
+var_values2 = [[S] for S in np.arange(10, 50)]
 var_name3 = 'seed'
 var_values3 = np.arange(10)
 
