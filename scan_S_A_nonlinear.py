@@ -37,7 +37,7 @@ var_name3 = 'seed'
 var_values3 = np.arange(10)
 
 # Prepare output directory
-output_dir = "results/sweep_L_A"
+output_dir = "results/sweep_S_A_seed"
 os.makedirs(output_dir, exist_ok=True)
 
 # Prepare all combinations
