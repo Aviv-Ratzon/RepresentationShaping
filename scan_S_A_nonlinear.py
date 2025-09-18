@@ -51,7 +51,7 @@ def run_and_save(idx, v1, v2, v3):
     setattr(C_local, var_name3, v3)
     C_local.gpu_id = idx % 8
     # Set learning rate as specified
-    C_local.learning_rate = C.learning_rate * (0.5 ** ((v2+v1)/2))
+    C_local.learning_rate = C.learning_rate
     # Run simulation
     data_dict = run_sim_wrapper(C_local)
     # Save result
