@@ -30,9 +30,8 @@ C.loss_fn = nn.MSELoss()
 
 # Sweep variables
 var_name1 = 'max_move'
-var_values1 = np.arange(1, C.length_corridors[0])
 var_name2 = 'length_corridors'
-var_values2 = [[S] for S in np.arange(10, 50)]
+var_values2 = [[S] for S in np.arange(10, 20)]
 var_name3 = 'seed'
 var_values3 = np.arange(10)
 
@@ -41,7 +40,13 @@ output_dir = "results/sweep_S_A_seed"
 os.makedirs(output_dir, exist_ok=True)
 
 # Prepare all combinations
-combinations = [(v1, v2, v3) for v1 in var_values1 for v2 in var_values2 for v3 in var_values3]
+combinations = []
+for v2 in var_values2:
+    v2_val = v2[0]  # since v2 is a list like [S]
+    for v1 in np.arange(1, v2_val):
+        for v3 in var_values3:
+            combinations.append((v1, v2, v3))
+
 n_total = len(combinations)
 
 def run_and_save(idx, v1, v2, v3):
