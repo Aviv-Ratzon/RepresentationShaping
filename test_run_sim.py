@@ -14,11 +14,12 @@ C.learning_rate = 0.001
 C.length_corridors = [10]*1
 C.hidden_size = 100
 C.L = 5
-C.num_epochs = 10000
+C.num_epochs = 1000
 C.algo_name = 'Adam'
 C.loss_fn = nn.CrossEntropyLoss()
 C.max_move = 4
-C.data_module = 'random_walk'
-C.n_samples = 1000
+C.data_geometry = 'back_and_forth'
+C.n_samples = 10000
+
 
 d = run_sim_wrapper(C)
