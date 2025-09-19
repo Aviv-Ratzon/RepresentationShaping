@@ -672,6 +672,9 @@ class MNISTActionGAN:
         self._plot_class_mean_distance_matrix(all_latents, all_targets, epoch)
         
         # Plot PCA visualization
+        # Save all_latents and all_targets to a file with A value and epoch
+        save_path = os.path.join(self.plots_dir, f'latents_A{self.args.A}_epoch{epoch}.npz')
+        np.savez(save_path, all_latents=all_latents, all_targets=all_targets)
         self._plot_pca_visualization(all_latents, all_targets, epoch)
         
         self.encoder.train()
@@ -875,7 +878,7 @@ class MNISTActionGAN:
             col = i % cols
             
             axes[row, col].imshow(generated_images[i].squeeze(), cmap='gray')
-            axes[row, col].set_title(f'PC: {pc_values[i]:.3f}')
+            axes[row, col].set_title(f'PC: {pc_values[i]:.3f}', fontname='Times New Roman')
             axes[row, col].axis('off')
         
         # Hide unused subplots
@@ -884,8 +887,11 @@ class MNISTActionGAN:
             col = i % cols
             axes[row, col].axis('off')
         
-        plt.suptitle(f'Images Generated Along First Principal Component (Epoch {epoch})', 
-                    fontsize=16)
+        plt.suptitle(
+            f'Images Generated Along First Principal Component',
+            fontsize=16,
+            fontname='Times New Roman'
+        )
         plt.tight_layout()
         plt.savefig(os.path.join(self.plots_dir, f'pc_samples_epoch_{epoch}.png'), 
                    dpi=150, bbox_inches='tight')
@@ -1225,7 +1231,7 @@ def main():
                        help='Number of layers for combined encoder (default: 2)')
     
     # PC sampling parameters
-    parser.add_argument('--samples_gen_pc', type=int, default=20, 
+    parser.add_argument('--samples_gen_pc', type=int, default=10, 
                        help='Number of samples to generate along first PC (default: 20)')
     parser.add_argument('--pc_sampling_interval', type=int, default=20, 
                        help='Interval for PC sampling during training (default: 20)')
