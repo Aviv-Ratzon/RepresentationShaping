@@ -1228,11 +1228,7 @@ def create_data_back_and_forth(C):
     np.random.seed(C.seed)
     
     n_states = C.length_corridors[0]
-    n_samples = C.n_samples
     max_steps = C.max_move
-    
-    # Generate random starting positions
-    start_positions = np.random.randint(0, n_states, n_samples)
     
     # Generate random walks
     X = []
@@ -1243,8 +1239,8 @@ def create_data_back_and_forth(C):
     action_taken = []
     dim_l = []
     
-    for i in range(n_samples):
-        current_pos = start_positions[i]
+    for state in range(n_states):
+        current_pos = state
         start_pos = current_pos
         
         # Perform random walk for max_steps
