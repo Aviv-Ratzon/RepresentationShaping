@@ -1240,7 +1240,7 @@ def create_data_back_and_forth(C):
     dim_l = []
     
     for state in range(n_states):
-        start_pos = current_pos
+        start_pos = state
         # Perform random walk for max_steps
         for a in [-1, 0, 1]:
             current_pos = state
