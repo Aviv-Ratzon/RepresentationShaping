@@ -1107,7 +1107,7 @@ def create_data_random_walk(C):
         # Perform random walk for max_steps
         for step in range(max_steps):
             # Random step: -1 (left) or +1 (right) with equal probability
-            step_direction = np.random.choice([-1, 1])
+            step_direction = np.random.choice([-1, 0, 1])
             next_pos = current_pos + step_direction
             
             # Apply reflective boundary conditions
