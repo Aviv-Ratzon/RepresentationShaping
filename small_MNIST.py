@@ -35,6 +35,30 @@ warnings.filterwarnings('ignore')
 plt.style.use('default')
 sns.set_palette("husl")
 
+# Set font family with fallback - suppress font warnings
+import matplotlib
+import matplotlib.font_manager as fm
+
+# Suppress font warnings
+import logging
+logging.getLogger('matplotlib.font_manager').setLevel(logging.ERROR)
+
+# Configure fonts to avoid Times New Roman issues
+matplotlib.rcParams['font.family'] = ['DejaVu Serif', 'serif']
+matplotlib.rcParams['font.serif'] = ['DejaVu Serif', 'serif']
+matplotlib.rcParams['font.size'] = 10
+matplotlib.rcParams['axes.titlesize'] = 12
+matplotlib.rcParams['axes.labelsize'] = 10
+matplotlib.rcParams['xtick.labelsize'] = 9
+matplotlib.rcParams['ytick.labelsize'] = 9
+matplotlib.rcParams['legend.fontsize'] = 9
+
+# Clear font cache to avoid conflicts
+try:
+    fm._rebuild()
+except:
+    pass
+
 class MNISTActionDataset(Dataset):
     """
     Dataset for MNIST with action-based transformations.
@@ -601,6 +625,9 @@ class MNISTActionGAN:
     
     def _plot_sample_grid(self, input_images, input_labels, actions, target_labels, fake_images, epoch):
         """Plot sample grid with input, target, action, and generated images."""
+        # Set font to avoid Times New Roman issues
+        plt.rcParams['font.family'] = 'DejaVu Serif'
+        
         batch_size = min(16, input_images.size(0))  # Show up to 16 samples
         
         fig, axes = plt.subplots(4, batch_size, figsize=(batch_size * 2, 8))
@@ -681,6 +708,9 @@ class MNISTActionGAN:
     
     def _plot_distance_matrix(self, latents, targets, epoch):
         """Plot pairwise distance matrix of latent vectors."""
+        # Set font to avoid Times New Roman issues
+        plt.rcParams['font.family'] = 'DejaVu Serif'
+        
         # Sample subset for visualization if too many points
         if len(latents) > 1000:
             indices = np.random.choice(len(latents), 1000, replace=False)
@@ -707,6 +737,9 @@ class MNISTActionGAN:
     
     def _plot_class_mean_distance_matrix(self, latents, targets, epoch):
         """Plot distance matrix of class-mean latent vectors."""
+        # Set font to avoid Times New Roman issues
+        plt.rcParams['font.family'] = 'DejaVu Serif'
+        
         # Compute class means
         class_means = []
         for digit in range(10):
@@ -741,6 +774,9 @@ class MNISTActionGAN:
     
     def _plot_pca_visualization(self, latents, targets, epoch):
         """Plot PCA visualization of latent space."""
+        # Set font to avoid Times New Roman issues
+        plt.rcParams['font.family'] = 'DejaVu Serif'
+        
         # Perform PCA
         pca = PCA(n_components=2)
         latents_2d = pca.fit_transform(latents)
@@ -861,6 +897,9 @@ class MNISTActionGAN:
     
     def _plot_pc_samples(self, generated_images, pc_values, epoch):
         """Plot generated images along the first principal component."""
+        # Set font to avoid Times New Roman issues
+        plt.rcParams['font.family'] = 'DejaVu Serif'
+        
         num_samples = len(generated_images)
         
         # Create grid layout
@@ -887,11 +926,11 @@ class MNISTActionGAN:
             col = i % cols
             axes[row, col].axis('off')
         
-        plt.suptitle(
-            f'Images Generated Along First Principal Component',
-            fontsize=16,
-            fontname='Times New Roman'
-        )
+        # plt.suptitle(
+        #     f'Images Generated Along First Principal Component',
+        #     fontsize=16,
+        #     fontname='Times New Roman'
+        # )
         plt.tight_layout()
         plt.savefig(os.path.join(self.plots_dir, f'pc_samples_epoch_{epoch}.png'), 
                    dpi=150, bbox_inches='tight')
@@ -900,6 +939,9 @@ class MNISTActionGAN:
     def plot_loss_curves(self):
         """Plot and save loss curves on log scale."""
         print("Plotting loss curves...")
+        
+        # Set font to avoid Times New Roman issues
+        plt.rcParams['font.family'] = 'DejaVu Serif'
         
         epochs = range(1, len(self.loss_history['d_loss']) + 1)
         

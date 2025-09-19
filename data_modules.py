@@ -1068,8 +1068,8 @@ def create_data_random_walk(C):
         C.n_samples = 1000
     if not hasattr(C, 'length_corridors'):
         C.length_corridors = [10]
-    if not hasattr(C, 'max_action'):
-        C.max_action = 5
+    if not hasattr(C, 'max_move'):
+        C.max_move = 5
     if not hasattr(C, 'one_hot_inputs'):
         C.one_hot_inputs = True
     if not hasattr(C, 'input_size'):
@@ -1086,7 +1086,7 @@ def create_data_random_walk(C):
     
     n_states = C.length_corridors[0]
     n_samples = C.n_samples
-    max_steps = C.max_action
+    max_steps = C.max_move
     
     # Generate random starting positions
     start_positions = np.random.randint(0, n_states, n_samples)
@@ -1136,7 +1136,11 @@ def create_data_random_walk(C):
         # Action is the sequence of steps taken (encoded as a single value for simplicity)
         # We'll use the net displacement as the action
         net_displacement = current_pos - start_pos
-        action_vec = np.array([net_displacement])
+        # One-hot encode net_displacement in range [-(n_states-1), ..., 0, ..., n_states-1]
+        action_dim = 2 * (n_states - 1) + 1
+        action_offset = n_states - 1  # So that -max maps to 0, 0 maps to n_states-1, +max maps to 2*(n_states-1)
+        action_vec = np.zeros(action_dim)
+        action_vec[net_displacement + action_offset] = 1
         
         X.append(np.concatenate([start_state_vec, action_vec]))
         y.append(final_state_vec)
@@ -1163,7 +1167,7 @@ def create_data_random_walk(C):
         input_size = C.input_size
         output_size = C.input_size
     
-    n_actions = 1  # Net displacement as single action
+    n_actions = action_dim
     
     # Apply PCA whitening if requested
     if C.whiten_data:
