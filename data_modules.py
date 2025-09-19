@@ -1187,6 +1187,153 @@ def create_data_random_walk(C):
     return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
 
 
+def create_data_back_and_forth(C):
+    """
+    Create data for random walk with reflective boundary conditions.
+    
+    Each data point:
+    - Starts from a random position s in [0, C.length_corridors[0]-1]
+    - Performs a random walk for C.max_action steps
+    - Uses reflective boundary conditions (bounces off walls)
+    - Target is the final state after the random walk
+    
+    Configuration parameters:
+    - n_samples: Number of samples to generate (default: 1000)
+    - length_corridors: List with first element being number of states (default: [10])
+    - max_action: Number of steps in random walk (default: 5)
+    - one_hot_inputs: Whether to use one-hot encoding for states (default: True)
+    - input_size: Size of input vectors if not one_hot_inputs (default: 10)
+    - whiten_data: Whether to apply PCA whitening (default: False)
+    - print_progress: Whether to print progress information (default: False)
+    """
+    # Set default parameters if not provided
+    if not hasattr(C, 'n_samples'):
+        C.n_samples = 1000
+    if not hasattr(C, 'length_corridors'):
+        C.length_corridors = [10]
+    if not hasattr(C, 'max_move'):
+        C.max_move = 5
+    if not hasattr(C, 'one_hot_inputs'):
+        C.one_hot_inputs = True
+    if not hasattr(C, 'input_size'):
+        C.input_size = 10
+    if not hasattr(C, 'whiten_data'):
+        C.whiten_data = False
+    if not hasattr(C, 'print_progress'):
+        C.print_progress = False
+    if not hasattr(C, 'seed'):
+        C.seed = 0
+    
+    # Set random seed
+    np.random.seed(C.seed)
+    
+    n_states = C.length_corridors[0]
+    n_samples = C.n_samples
+    max_steps = C.max_move
+    
+    # Generate random starting positions
+    start_positions = np.random.randint(0, n_states, n_samples)
+    
+    # Generate random walks
+    X = []
+    y = []
+    loc_X = []
+    loc_y = []
+    corridor = []
+    action_taken = []
+    dim_l = []
+    
+    for i in range(n_samples):
+        current_pos = start_positions[i]
+        start_pos = current_pos
+        
+        # Perform random walk for max_steps
+        for a in [-1, 0, 1]:
+            for step in range(max_steps):
+                # Random step: -1 (left) or +1 (right) with equal probability
+                next_pos = current_pos + a
+                
+                # Apply reflective boundary conditions
+                if next_pos < 0:
+                    next_pos = 1  # Reflect off left boundary
+                    a = -a
+                elif next_pos >= n_states:
+                    next_pos = n_states - 2  # Reflect off right boundary
+                    a = -a
+                
+                current_pos = next_pos
+                if a == 0:
+                    break
+        
+        # After completing the random walk, create one data point
+        # Input: [starting_state, action_sequence] where action_sequence is the sequence of steps
+        # Target: final_state after the random walk
+        
+        if C.one_hot_inputs:
+            # One-hot encoding for states
+            start_state_vec = np.zeros(n_states)
+            start_state_vec[start_pos] = 1
+            final_state_vec = np.zeros(n_states)
+            final_state_vec[current_pos] = 1
+        else:
+            # Random vector encoding for states
+            start_state_vec = np.random.normal(0, 1, C.input_size)
+            final_state_vec = np.random.normal(0, 1, C.input_size)
+        
+        # Action is the sequence of steps taken (encoded as a single value for simplicity)
+        # We'll use the net displacement as the action
+        net_displacement = current_pos - start_pos
+        # One-hot encode net_displacement in range [-(n_states-1), ..., 0, ..., n_states-1]
+        action_dim = 2 * (n_states - 1) + 1
+        action_offset = n_states - 1  # So that -max maps to 0, 0 maps to n_states-1, +max maps to 2*(n_states-1)
+        action_vec = np.zeros(action_dim)
+        action_vec[net_displacement + action_offset] = 1
+        
+        X.append(np.concatenate([start_state_vec, action_vec]))
+        y.append(final_state_vec)
+        corridor.append(0)  # All samples from corridor 0
+        loc_X.append(start_pos)
+        loc_y.append(current_pos)
+        action_taken.append(net_displacement)
+        dim_l.append(0)  # Not applicable for 1D random walk
+    
+    # Convert to numpy arrays
+    X = np.array(X, dtype=np.float32)
+    y = np.array(y, dtype=np.float32)
+    corridor = np.array(corridor, dtype=int)
+    loc_X = np.array(loc_X)
+    loc_y = np.array(loc_y)
+    action_taken = np.array(action_taken)
+    dim_l = np.array(dim_l, dtype=int)
+    
+    # Set sizes
+    if C.one_hot_inputs:
+        input_size = n_states
+        output_size = n_states
+    else:
+        input_size = C.input_size
+        output_size = C.input_size
+    
+    n_actions = action_dim
+    
+    # Apply PCA whitening if requested
+    if C.whiten_data:
+        pca = PCA(whiten=True)
+        X = pca.fit_transform(X)
+    
+    if C.print_progress:
+        print(f'Random walk data generation:')
+        print(f'Number of samples: {X.shape[0]}')
+        print(f'Number of states: {n_states}')
+        print(f'Steps per walk: {max_steps}')
+        print(f'Input dimension: {X.shape[1]} (state {input_size} + action 1)')
+        print(f'Output dimension: {y.shape[1]}')
+        print(f'Number of actions: {n_actions}')
+        print()
+    
+    return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, n_actions
+
+
 # Dictionary mapping data geometry types to their corresponding create_data functions
 DATA_GEOMETRY_FUNCTIONS = {
     'euclidean': create_data_euclidean,
@@ -1198,6 +1345,7 @@ DATA_GEOMETRY_FUNCTIONS = {
     'mnist': create_data_mnist,
     '2d_euclidean': create_data_2d_euclidean,
     'random_walk': create_data_random_walk,
+    'back_and_forth': create_data_back_and_forth,
 }
 
 
