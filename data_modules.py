@@ -1262,41 +1262,42 @@ def create_data_back_and_forth(C):
                     a = -a
                 
                 current_pos = next_pos
+        
+                # After completing the random walk, create one data point
+                # Input: [starting_state, action_sequence] where action_sequence is the sequence of steps
+                # Target: final_state after the random walk
+                
+                if C.one_hot_inputs:
+                    # One-hot encoding for states
+                    start_state_vec = np.zeros(n_states)
+                    start_state_vec[start_pos] = 1
+                    final_state_vec = np.zeros(n_states)
+                    final_state_vec[current_pos] = 1
+                else:
+                    # Random vector encoding for states
+                    start_state_vec = np.random.normal(0, 1, C.input_size)
+                    final_state_vec = np.random.normal(0, 1, C.input_size)
+                
+                # Action is the sequence of steps taken (encoded as a single value for simplicity)
+                # We'll use the net displacement as the action
+                net_displacement = current_pos - start_pos
+                # One-hot encode net_displacement in range [-(n_states-1), ..., 0, ..., n_states-1]
+                action_dim = 2 * (n_states - 1) + 1
+                action_offset = n_states - 1  # So that -max maps to 0, 0 maps to n_states-1, +max maps to 2*(n_states-1)
+                action_vec = np.zeros(action_dim)
+                action_vec[net_displacement + action_offset] = 1
+                
+                X.append(np.concatenate([start_state_vec, action_vec]))
+                y.append(final_state_vec)
+                corridor.append(0)  # All samples from corridor 0
+                loc_X.append(start_pos)
+                loc_y.append(current_pos)
+                action_taken.append(net_displacement)
+                dim_l.append(0)  # Not applicable for 1D random walk
+                
                 if a == 0:
                     break
         
-        # After completing the random walk, create one data point
-        # Input: [starting_state, action_sequence] where action_sequence is the sequence of steps
-        # Target: final_state after the random walk
-        
-        if C.one_hot_inputs:
-            # One-hot encoding for states
-            start_state_vec = np.zeros(n_states)
-            start_state_vec[start_pos] = 1
-            final_state_vec = np.zeros(n_states)
-            final_state_vec[current_pos] = 1
-        else:
-            # Random vector encoding for states
-            start_state_vec = np.random.normal(0, 1, C.input_size)
-            final_state_vec = np.random.normal(0, 1, C.input_size)
-        
-        # Action is the sequence of steps taken (encoded as a single value for simplicity)
-        # We'll use the net displacement as the action
-        net_displacement = current_pos - start_pos
-        # One-hot encode net_displacement in range [-(n_states-1), ..., 0, ..., n_states-1]
-        action_dim = 2 * (n_states - 1) + 1
-        action_offset = n_states - 1  # So that -max maps to 0, 0 maps to n_states-1, +max maps to 2*(n_states-1)
-        action_vec = np.zeros(action_dim)
-        action_vec[net_displacement + action_offset] = 1
-        
-        X.append(np.concatenate([start_state_vec, action_vec]))
-        y.append(final_state_vec)
-        corridor.append(0)  # All samples from corridor 0
-        loc_X.append(start_pos)
-        loc_y.append(current_pos)
-        action_taken.append(net_displacement)
-        dim_l.append(0)  # Not applicable for 1D random walk
-    
     # Convert to numpy arrays
     X = np.array(X, dtype=np.float32)
     y = np.array(y, dtype=np.float32)
