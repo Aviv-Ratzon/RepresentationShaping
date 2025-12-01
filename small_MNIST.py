@@ -15,7 +15,9 @@ Usage:
 import argparse
 import os
 import random
+import shutil
 import numpy as np
+from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.decomposition import PCA
@@ -70,11 +72,12 @@ class MNISTActionDataset(Dataset):
         transform: Image transformations
     """
     
-    def __init__(self, N=10, A=2, cyclic=False, transform=None):
+    def __init__(self, N=10, A=2, cyclic=False, transform=None, image_actions=False):
         self.N = N
         self.A = A
         self.cyclic = cyclic
         self.transform = transform
+        self.image_actions = image_actions
         
         # Load MNIST dataset
         self.dataset = torchvision.datasets.MNIST(
@@ -84,11 +87,18 @@ class MNISTActionDataset(Dataset):
         # Create balanced dataset with N samples per class
         self.data, self.labels = self._create_balanced_dataset()
         
+        # If using image actions, create action image pool by digit class
+        if self.image_actions:
+            self.action_images_by_class = self._create_action_image_pool()
+        
         # Generate action-target pairs
         self.samples = self._generate_samples()
         
+        # Create index for fast lookup by target_label
+        self.target_label_index = self._create_target_label_index()
+        
         print(f"Created dataset with {len(self.samples)} samples")
-        print(f"Action range: [-{A}, {A}], Cyclic: {cyclic}")
+        print(f"Action range: [-{A}, {A}], Cyclic: {cyclic}, Image actions: {image_actions}")
     
     def _create_balanced_dataset(self):
         """Create balanced dataset with N samples per digit class."""
@@ -116,6 +126,35 @@ class MNISTActionDataset(Dataset):
         
         return balanced_data, balanced_labels
     
+    def _create_action_image_pool(self):
+        """Create a pool of action images organized by digit class."""
+        action_images_by_class = {i: [] for i in range(10)}
+        
+        # Group all MNIST images by class
+        for idx, (image, label) in enumerate(self.dataset):
+            action_images_by_class[label].append(image)
+        
+        return action_images_by_class
+    
+    def _get_action_image(self, action_value):
+        """Get a random action image corresponding to the absolute value of the action."""
+        # Get the digit corresponding to the absolute value of the action
+        action_digit = abs(action_value)
+        if action_digit > 9:
+            action_digit = action_digit % 10
+        
+        # Get sign: 1 for positive/zero, -1 for negative
+        sign = 1 if action_value >= 0 else -1
+        
+        # Get a random image from the action digit class
+        if len(self.action_images_by_class[action_digit]) > 0:
+            action_image = random.choice(self.action_images_by_class[action_digit])
+        else:
+            # Fallback: create a zero image if no images available
+            action_image = torch.zeros_like(self.data[0])
+        
+        return action_image, sign
+    
     def _generate_samples(self):
         """Generate (input_image, input_label, action, target_label) samples."""
         samples = []
@@ -131,31 +170,58 @@ class MNISTActionDataset(Dataset):
                     if target_label < 0 or target_label > 9:
                         continue
                 
-                # One-hot encode action
+                # One-hot encode action (for non-image actions)
                 action_onehot = torch.zeros(2 * self.A + 1)
                 action_onehot[action + self.A] = 1.0
                 
-                samples.append({
+                sample_dict = {
                     'input_image': image,
                     'input_label': input_label,
                     'action': action,
                     'action_onehot': action_onehot,
                     'target_label': target_label
-                })
+                }
+                
+                # If using image actions, add action image and sign
+                if self.image_actions:
+                    action_image, sign = self._get_action_image(action)
+                    sample_dict['action_image'] = action_image
+                    sample_dict['action_sign'] = sign
+                
+                samples.append(sample_dict)
         
         return samples
+    
+    def _create_target_label_index(self):
+        """Create index mapping target_label -> list of sample indices for fast lookup."""
+        index = {i: [] for i in range(10)}
+        for idx, sample in enumerate(self.samples):
+            target_label = sample['target_label']
+            if isinstance(target_label, torch.Tensor):
+                target_label = target_label.item()
+            index[target_label].append(idx)
+        return index
     
     def __len__(self):
         return len(self.samples)
     
     def __getitem__(self, idx):
         sample = self.samples[idx]
-        return (
-            sample['input_image'],
-            sample['input_label'],
-            sample['action_onehot'],
-            sample['target_label']
-        )
+        if self.image_actions:
+            return (
+                sample['input_image'],
+                sample['input_label'],
+                sample['action_image'],
+                sample['action_sign'],
+                sample['target_label']
+            )
+        else:
+            return (
+                sample['input_image'],
+                sample['input_label'],
+                sample['action_onehot'],
+                sample['target_label']
+            )
 
 
 class Encoder(nn.Module):
@@ -164,14 +230,18 @@ class Encoder(nn.Module):
     
     Args:
         input_channels: Number of input channels (1 for MNIST)
-        action_dim: Dimension of action vector (2*A+1)
+        action_dim: Dimension of action vector (2*A+1) - only used for non-image actions
         latent_dim: Dimension of latent vector z
+        image_actions: Whether actions are images (True) or one-hot vectors (False)
     """
     
-    def __init__(self, input_channels=1, action_dim=5, latent_dim=64, n_layers=2):
+    def __init__(self, input_channels=1, action_dim=5, latent_dim=64, n_layers=2, dropout_rate=0.0, image_actions=False):
         super(Encoder, self).__init__()
         
-        # Image encoder
+        self.dropout_rate = dropout_rate
+        self.image_actions = image_actions
+        
+        # Observation image encoder
         self.image_encoder = nn.Sequential(
             nn.Conv2d(input_channels, 32, 4, 2, 1),  # 28x28 -> 14x14
             nn.BatchNorm2d(32),
@@ -190,31 +260,83 @@ class Encoder(nn.Module):
             nn.LeakyReLU(0.2),
         )
         
-        # Action encoder
-        self.action_encoder = nn.Sequential(
-            nn.Linear(action_dim, 64),
-            nn.LeakyReLU(0.2),
-            nn.Linear(64, 64),
-            nn.LeakyReLU(0.2),
-        )
+        if self.image_actions:
+            # Action image encoder (same architecture as observation encoder)
+            self.action_image_encoder = nn.Sequential(
+                nn.Conv2d(input_channels, 32, 4, 2, 1),  # 28x28 -> 14x14
+                nn.BatchNorm2d(32),
+                nn.LeakyReLU(0.2),
+                
+                nn.Conv2d(32, 64, 4, 2, 1),  # 14x14 -> 7x7
+                nn.BatchNorm2d(64),
+                nn.LeakyReLU(0.2),
+                
+                nn.Conv2d(64, 128, 4, 2, 1),  # 7x7 -> 3x3
+                nn.BatchNorm2d(128),
+                nn.LeakyReLU(0.2),
+                
+                nn.Conv2d(128, 256, 3, 1, 0),  # 3x3 -> 1x1
+                nn.BatchNorm2d(256),
+                nn.LeakyReLU(0.2),
+            )
+            
+            # Sign processing layer (processes sign after action image encoding)
+            self.sign_processor = nn.Sequential(
+                nn.Linear(256 + 1, 64),  # 256 (action features) + 1 (sign)
+                nn.LeakyReLU(0.2),
+                nn.Dropout(dropout_rate) if dropout_rate > 0 else nn.Identity(),
+                nn.Linear(64, 64),
+                nn.LeakyReLU(0.2),
+                nn.Dropout(dropout_rate) if dropout_rate > 0 else nn.Identity(),
+            )
+        else:
+            # Action encoder for one-hot vectors
+            self.action_encoder = nn.Sequential(
+                nn.Linear(action_dim, 64),
+                nn.LeakyReLU(0.2),
+                nn.Dropout(dropout_rate) if dropout_rate > 0 else nn.Identity(),
+                nn.Linear(64, 64),
+                nn.LeakyReLU(0.2),
+                nn.Dropout(dropout_rate) if dropout_rate > 0 else nn.Identity(),
+            )
         
         # Combined encoder
         combined_layers = []
-        input_dim = 256 + 64
+        input_dim = 256 + 64  # image features + action features
         hidden_dim = 512
         for i in range(n_layers - 1):
             combined_layers.append(nn.Linear(input_dim if i == 0 else hidden_dim, hidden_dim))
             combined_layers.append(nn.LeakyReLU(0.2))
+            if dropout_rate > 0:
+                combined_layers.append(nn.Dropout(dropout_rate))
         combined_layers.append(nn.Linear(hidden_dim, latent_dim))
         self.combined_encoder = nn.Sequential(*combined_layers)
     
-    def forward(self, x, a):
-        # Encode image
+    def forward(self, x, a, sign=None):
+        # Encode observation image
         img_features = self.image_encoder(x)  # [B, 256, 1, 1]
         img_features = img_features.view(img_features.size(0), -1)  # [B, 256]
         
         # Encode action
-        action_features = self.action_encoder(a)  # [B, 64]
+        if self.image_actions:
+            # Encode action image
+            action_img_features = self.action_image_encoder(a)  # [B, 256, 1, 1]
+            action_img_features = action_img_features.view(action_img_features.size(0), -1)  # [B, 256]
+            
+            # Process sign after action image encoding
+            # sign should be [B, 1] with values -1 or 1
+            if sign is None:
+                raise ValueError("sign must be provided when image_actions=True")
+            sign = sign.view(-1, 1).float()  # Ensure [B, 1] shape
+            
+            # Concatenate action image features with sign
+            action_with_sign = torch.cat([action_img_features, sign], dim=1)  # [B, 257]
+            
+            # Process through sign processor
+            action_features = self.sign_processor(action_with_sign)  # [B, 64]
+        else:
+            # Encode one-hot action vector
+            action_features = self.action_encoder(a)  # [B, 64]
         
         # Combine features
         combined = torch.cat([img_features, action_features], dim=1)  # [B, 320]
@@ -341,8 +463,37 @@ class MNISTActionGAN:
             'recon_loss': []
         }
         
+        # Set regularization parameters based on type
+        self._set_regularization_params()
+        
         print(f"Using device: {self.device}")
         print(f"Number of GPUs: {torch.cuda.device_count()}")
+    
+    def _set_regularization_params(self):
+        """Set regularization parameters based on regularization type."""
+        if self.args.regularization_type == 'l1':
+            self.args.l1_reg = 0.001
+            self.args.l2_reg = 0.0
+            self.args.dropout_rate = 0.0
+        elif self.args.regularization_type == 'l2':
+            self.args.l1_reg = 0.0
+            self.args.l2_reg = 0.001
+            self.args.dropout_rate = 0.0
+        elif self.args.regularization_type == 'dropout':
+            self.args.l1_reg = 0.0
+            self.args.l2_reg = 0.0
+            self.args.dropout_rate = 0.3
+        elif self.args.regularization_type == 'l1_l2':
+            self.args.l1_reg = 0.0005
+            self.args.l2_reg = 0.0005
+            self.args.dropout_rate = 0.0
+        elif self.args.regularization_type == 'all':
+            self.args.l1_reg = 0.0003
+            self.args.l2_reg = 0.0003
+            self.args.dropout_rate = 0.2
+        # For 'none', keep default values (all 0.0)
+        
+        print(f"Regularization settings: L1={self.args.l1_reg}, L2={self.args.l2_reg}, Dropout={self.args.dropout_rate}")
     
     def create_directories(self):
         """Create output directories."""
@@ -351,7 +502,11 @@ class MNISTActionGAN:
         self.samples_dir = f"{base_dir}/samples"
         self.plots_dir = f"{base_dir}/plots"
         
-        os.makedirs(self.checkpoint_dir, exist_ok=True)
+        # Clear output folder if it exists
+        if os.path.exists(base_dir):
+            shutil.rmtree(base_dir)
+            print(f"Cleared existing output directory: {base_dir}")
+        
         os.makedirs(self.samples_dir, exist_ok=True)
         os.makedirs(self.plots_dir, exist_ok=True)
         
@@ -365,7 +520,9 @@ class MNISTActionGAN:
             input_channels=1,
             action_dim=action_dim,
             latent_dim=self.args.latent_dim,
-            n_layers=self.args.n_layers
+            n_layers=self.args.n_layers,
+            dropout_rate=self.args.dropout_rate,
+            image_actions=self.args.image_actions
         ).to(self.device)
         
         self.generator = Generator(
@@ -417,7 +574,8 @@ class MNISTActionGAN:
             N=self.args.N,
             A=self.args.A,
             cyclic=self.args.cyclic,
-            transform=transform
+            transform=transform,
+            image_actions=self.args.image_actions
         )
         
         self.dataloader = DataLoader(
@@ -461,13 +619,29 @@ class MNISTActionGAN:
         
         return d_loss.item(), real_loss.item(), fake_loss.item()
     
-    def train_generator_encoder(self, input_images, input_labels, actions, target_labels):
+    def _unpack_batch(self, batch):
+        """Unpack batch, handling both image_actions and regular actions."""
+        if self.args.image_actions:
+            input_images, input_labels, action_images, action_signs, target_labels = batch
+            return input_images, input_labels, action_images, action_signs, target_labels
+        else:
+            input_images, input_labels, actions, target_labels = batch
+            return input_images, input_labels, actions, None, target_labels
+    
+    def _encode(self, input_images, actions, action_signs=None):
+        """Encode input images and actions, handling both image_actions and regular actions."""
+        if self.args.image_actions:
+            return self.encoder(input_images, actions, action_signs)
+        else:
+            return self.encoder(input_images, actions)
+    
+    def train_generator_encoder(self, input_images, input_labels, actions, target_labels, action_signs=None):
         """Train generator and encoder for one step."""
         self.optimizer_G.zero_grad()
         self.optimizer_E.zero_grad()
         
         # Encode input image and action to latent
-        z = self.encoder(input_images, actions)
+        z = self._encode(input_images, actions, action_signs)
         
         # Generate fake images
         fake_images = self.generator(z)
@@ -507,6 +681,10 @@ class MNISTActionGAN:
         else:
             recon_loss = torch.tensor(0.0)
         
+        # Add regularization loss
+        reg_loss = self._compute_regularization_loss()
+        total_loss += reg_loss
+        
         total_loss = self.args.g_loss_weight * total_loss
         total_loss.backward()
         
@@ -525,14 +703,16 @@ class MNISTActionGAN:
         batch_size = target_labels.size(0)
         recon_images = torch.zeros_like(self.dataset.data[0]).unsqueeze(0).repeat(batch_size, 1, 1, 1)
         
+        # Use pre-built index for O(1) lookup instead of O(n) search
+        target_label_index = self.dataset.target_label_index
+        
         for i, target_label in enumerate(target_labels):
-            # Find all samples with this target label
-            target_samples = [idx for idx, sample in enumerate(self.dataset.samples) 
-                            if sample['target_label'] == target_label.item()]
+            target_label_val = target_label.item()
             
-            if target_samples:
-                # Randomly select one
-                random_idx = random.choice(target_samples)
+            # Fast lookup using index
+            if target_label_val in target_label_index and target_label_index[target_label_val]:
+                # Randomly select one from the pre-indexed list
+                random_idx = random.choice(target_label_index[target_label_val])
                 recon_images[i] = self.dataset.samples[random_idx]['input_image']
         
         return recon_images.to(self.device)
@@ -568,26 +748,42 @@ class MNISTActionGAN:
     def _extract_discriminator_features(self, images):
         """Extract features from discriminator for feature matching."""
         with torch.no_grad():
-            features = self.discriminator.conv_layers(images)
+            # Handle DataParallel wrapping
+            if isinstance(self.discriminator, DataParallel):
+                discriminator = self.discriminator.module
+            else:
+                discriminator = self.discriminator
+            features = discriminator.conv_layers(images)
             features = features.view(features.size(0), -1)
         return features
     
+    def _compute_regularization_loss(self):
+        """Compute L1 and L2 regularization losses for encoder."""
+        l1_loss = 0.0
+        l2_loss = 0.0
+        
+        # Get encoder parameters (handle DataParallel)
+        if isinstance(self.encoder, DataParallel):
+            encoder_params = self.encoder.module.parameters()
+        else:
+            encoder_params = self.encoder.parameters()
+        
+        for param in encoder_params:
+            if self.args.l1_reg > 0:
+                l1_loss += torch.sum(torch.abs(param))
+            if self.args.l2_reg > 0:
+                l2_loss += torch.sum(param ** 2)
+        
+        total_reg_loss = 0.0
+        if self.args.l1_reg > 0:
+            total_reg_loss += self.args.l1_reg * l1_loss
+        if self.args.l2_reg > 0:
+            total_reg_loss += self.args.l2_reg * l2_loss
+            
+        return total_reg_loss
+    
     def save_checkpoint(self, epoch):
-        """Save model checkpoint and generate visualizations."""
-        # Save model weights
-        checkpoint = {
-            'epoch': epoch,
-            'encoder_state_dict': self.encoder.state_dict(),
-            'generator_state_dict': self.generator.state_dict(),
-            'discriminator_state_dict': self.discriminator.state_dict(),
-            'optimizer_E_state_dict': self.optimizer_E.state_dict(),
-            'optimizer_G_state_dict': self.optimizer_G.state_dict(),
-            'optimizer_D_state_dict': self.optimizer_D.state_dict(),
-        }
-        
-        checkpoint_path = os.path.join(self.checkpoint_dir, f'checkpoint_epoch_{epoch}.pth')
-        torch.save(checkpoint, checkpoint_path)
-        
+        """Generate visualizations at checkpoint interval."""
         # Generate sample grids
         self.generate_sample_grids(epoch)
         
@@ -596,7 +792,7 @@ class MNISTActionGAN:
 
         self.plot_loss_curves()
         
-        print(f"Checkpoint saved at epoch {epoch}")
+        print(f"Visualizations saved at epoch {epoch}")
     
     def generate_sample_grids(self, epoch):
         """Generate and save sample grids."""
@@ -606,59 +802,50 @@ class MNISTActionGAN:
         with torch.no_grad():
             # Get a batch of samples
             batch = next(iter(self.dataloader))
-            input_images, input_labels, actions, target_labels = batch
+            input_images, input_labels, actions, action_signs, target_labels = self._unpack_batch(batch)
             input_images = input_images.to(self.device)
             actions = actions.to(self.device)
+            if action_signs is not None:
+                action_signs = action_signs.to(self.device)
             target_labels = target_labels.to(self.device)
             
             # Generate fake images
-            z = self.encoder(input_images, actions)
+            z = self._encode(input_images, actions, action_signs)
             fake_images = self.generator(z)
             
             # Create sample grid
             self._plot_sample_grid(
-                input_images, input_labels, actions, target_labels, fake_images, epoch
+                input_images, input_labels, actions, target_labels, fake_images, epoch, action_signs
             )
         
         self.encoder.train()
         self.generator.train()
     
-    def _plot_sample_grid(self, input_images, input_labels, actions, target_labels, fake_images, epoch):
-        """Plot sample grid with input, target, action, and generated images."""
+    def _plot_sample_grid(self, input_images, input_labels, actions, target_labels, fake_images, epoch, action_signs=None):
+        """Plot sample grid with generated images only."""
         # Set font to avoid Times New Roman issues
         plt.rcParams['font.family'] = 'DejaVu Serif'
         
         batch_size = min(16, input_images.size(0))  # Show up to 16 samples
         
-        fig, axes = plt.subplots(4, batch_size, figsize=(batch_size * 2, 8))
+        fig, axes = plt.subplots(1, batch_size, figsize=(batch_size * 2, 2))
         if batch_size == 1:
-            axes = axes.reshape(4, 1)
+            axes = [axes]
         
         for i in range(batch_size):
-            # Input image
-            axes[0, i].imshow(input_images[i].cpu().squeeze(), cmap='gray')
-            axes[0, i].set_title(f'Input: {input_labels[i].item()}')
-            axes[0, i].axis('off')
+            # Get action value
+            if self.args.image_actions:
+                # Display action sign
+                sign_str = '+' if action_signs[i].item() > 0 else '-'
+                action_val = sign_str
+            else:
+                # Display action value from one-hot
+                action_val = actions[i].argmax().item() - self.args.A
             
-            # Action
-            action_val = actions[i].argmax().item() - self.args.A
-            axes[1, i].text(0.5, 0.5, f'Action: {action_val}', 
-                           ha='center', va='center', fontsize=12)
-            axes[1, i].set_xlim(0, 1)
-            axes[1, i].set_ylim(0, 1)
-            axes[1, i].axis('off')
-            
-            # Target label
-            axes[2, i].text(0.5, 0.5, f'Target: {target_labels[i].item()}', 
-                           ha='center', va='center', fontsize=12)
-            axes[2, i].set_xlim(0, 1)
-            axes[2, i].set_ylim(0, 1)
-            axes[2, i].axis('off')
-            
-            # Generated image
-            axes[3, i].imshow(fake_images[i].cpu().squeeze(), cmap='gray')
-            axes[3, i].set_title(f'Generated')
-            axes[3, i].axis('off')
+            # Generated image with title containing Input and Action
+            axes[i].imshow(fake_images[i].cpu().squeeze(), cmap='gray')
+            axes[i].set_title(f'Input: {input_labels[i].item()}\nAction: {action_val}')
+            axes[i].axis('off')
         
         plt.tight_layout()
         plt.savefig(os.path.join(self.samples_dir, f'samples_epoch_{epoch}.png'), 
@@ -674,11 +861,13 @@ class MNISTActionGAN:
         
         with torch.no_grad():
             for batch in self.dataloader:
-                input_images, input_labels, actions, target_labels = batch
+                input_images, input_labels, actions, action_signs, target_labels = self._unpack_batch(batch)
                 input_images = input_images.to(self.device)
+                if action_signs is not None:
+                    action_signs = action_signs.to(self.device)
                 
                 # Extract latent vectors
-                z = self.encoder(input_images, actions)
+                z = self._encode(input_images, actions, action_signs)
                 actions = target_labels - input_labels
                 all_latents.append(z[abs(actions)==0].cpu().numpy())
                 all_targets.append(target_labels[abs(actions)==0].numpy())
@@ -834,12 +1023,14 @@ class MNISTActionGAN:
         
         with torch.no_grad():
             for batch in self.dataloader:
-                input_images, input_labels, actions, target_labels = batch
+                input_images, input_labels, actions, action_signs, target_labels = self._unpack_batch(batch)
                 input_images = input_images.to(self.device)
                 actions = actions.to(self.device)
+                if action_signs is not None:
+                    action_signs = action_signs.to(self.device)
                 
                 # Extract latent vectors
-                z = self.encoder(input_images, actions)
+                z = self._encode(input_images, actions, action_signs)
                 all_latents.append(z.cpu().numpy())
         
         # Concatenate all latents
@@ -1035,10 +1226,12 @@ class MNISTActionGAN:
             epoch_recon_loss = 0
             
             for batch_idx, batch in enumerate(self.dataloader):
-                input_images, input_labels, actions, target_labels = batch
+                input_images, input_labels, actions, action_signs, target_labels = self._unpack_batch(batch)
                 input_images = input_images.to(self.device)
                 input_labels = input_labels.to(self.device)
                 actions = actions.to(self.device)
+                if action_signs is not None:
+                    action_signs = action_signs.to(self.device)
                 target_labels = target_labels.to(self.device)
                 
                 # Determine discriminator training ratio
@@ -1053,7 +1246,7 @@ class MNISTActionGAN:
                 # Train discriminator multiple times per generator update
                 for _ in range(d_train_ratio):
                     with torch.no_grad():
-                        z = self.encoder(input_images, actions)
+                        z = self._encode(input_images, actions, action_signs)
                         fake_images = self.generator(z)
                     
                     d_loss, real_loss, fake_loss = self.train_discriminator(
@@ -1062,7 +1255,7 @@ class MNISTActionGAN:
                 
                 # Train generator and encoder
                 g_loss, gan_loss, recon_loss = self.train_generator_encoder(
-                    input_images, input_labels, actions, target_labels
+                    input_images, input_labels, actions, target_labels, action_signs
                 )
                 
                 # Accumulate losses
@@ -1238,6 +1431,68 @@ class MNISTActionGAN:
             print(f"Warning: High loss variance detected (D std: {d_std:.4f}, G std: {g_std:.4f})")
 
 
+def save_command_line_args(args, parser, output_dir):
+    """
+    Save all command line arguments (including defaults) to a text file in command line format.
+    This ensures reproducibility by capturing all simulation parameters.
+    """
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Get all arguments as a dictionary
+    args_dict = vars(args)
+    
+    # Get default values from parser actions
+    parser_defaults = {}
+    for action in parser._actions:
+        if action.dest != 'help' and hasattr(action, 'default'):
+            parser_defaults[action.dest] = action.default
+    
+    # Build command line string
+    cmd_parts = ['python', 'small_MNIST.py']
+    
+    # Build command with all arguments, including defaults
+    # This ensures full reproducibility by explicitly showing all parameter values
+    for arg_name, arg_value in sorted(args_dict.items()):
+        # Skip None values (they won't be in the command)
+        if arg_value is None:
+            continue
+        
+        # Convert argument name to command line format (with --)
+        arg_flag = '--' + arg_name
+        
+        # Handle boolean flags
+        if isinstance(arg_value, bool):
+            # For action='store_true', only include if True
+            # For type=bool, include if True (False is usually default and not needed)
+            # However, to show all arguments including defaults, we could include False too,
+            # but argparse doesn't support --flag False syntax for store_true actions
+            if arg_value:
+                cmd_parts.append(arg_flag)
+            # Note: For False values with action='store_true', the flag simply isn't included
+            # This is the correct command-line representation
+        else:
+            # Add flag and value for non-boolean arguments (including defaults)
+            cmd_parts.extend([arg_flag, str(arg_value)])
+    
+    # Join command parts
+    complete_cmd = ' '.join(cmd_parts)
+    
+    # Save to file
+    cmd_file = os.path.join(output_dir, 'command_line.txt')
+    with open(cmd_file, 'w') as f:
+        f.write("# Complete command line with all arguments (including defaults)\n")
+        f.write("# Generated automatically by small_MNIST.py\n")
+        f.write(f"# Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write(complete_cmd + "\n")
+        f.write("\n# All arguments with values:\n")
+        for arg_name, arg_value in sorted(args_dict.items()):
+            default_val = parser_defaults.get(arg_name, 'N/A')
+            f.write(f"#   {arg_name}: {arg_value} (default: {default_val})\n")
+    
+    print(f"Command line arguments saved to: {cmd_file}")
+
+
 def main():
     """Main function with CLI interface."""
     parser = argparse.ArgumentParser(description='Train MNIST Action GAN')
@@ -1249,6 +1504,8 @@ def main():
                        help='Action range [-A, A] (default: 2)')
     parser.add_argument('--cyclic', type=bool, default=False, 
                        help='Use cyclic addition mod 10 (default: False)')
+    parser.add_argument('--image_actions', action='store_true',
+                       help='Use MNIST images as actions instead of scalar values (default: False)')
     
     # Model parameters
     parser.add_argument('--latent_dim', type=int, default=64, 
@@ -1316,6 +1573,17 @@ def main():
     parser.add_argument('--target_d_g_ratio', type=float, default=1.0,
                        help='Target discriminator/generator loss ratio for adaptive training (default: 1.0)')
     
+    # Regularization parameters
+    parser.add_argument('--l1_reg', type=float, default=0.0,
+                       help='L1 regularization weight for encoder (default: 0.0)')
+    parser.add_argument('--l2_reg', type=float, default=0.0,
+                       help='L2 regularization weight for encoder (default: 0.0)')
+    parser.add_argument('--dropout_rate', type=float, default=0.0,
+                       help='Dropout rate for encoder (default: 0.0)')
+    parser.add_argument('--regularization_type', type=str, default='none',
+                       choices=['none', 'l1', 'l2', 'dropout', 'l1_l2', 'all'],
+                       help='Type of regularization to apply (default: none)')
+    
     args = parser.parse_args()
     
     # Print configuration
@@ -1323,6 +1591,11 @@ def main():
     for arg, value in vars(args).items():
         print(f"  {arg}: {value}")
     print()
+    
+    # Create base directory and save command line arguments
+    base_dir = f"MNIST_small/{args.run_directory}"
+    os.makedirs(base_dir, exist_ok=True)
+    save_command_line_args(args, parser, base_dir)
     
     # Create model
     model = MNISTActionGAN(args)
