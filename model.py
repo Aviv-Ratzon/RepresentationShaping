@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 class DNN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, fixed_output=False, linear_net=False, G=1, bias=False):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, fixed_output=False, linear_net=False, G=1, bias=False, activation='ReLU'):
         super(DNN, self).__init__()
         self.num_layers = num_layers
         self.bias = bias
@@ -18,10 +18,27 @@ class DNN(nn.Module):
         if fixed_output:
             self.output_layer.requires_grad_(False)
 
+        # Set activation function
         if linear_net:
             self.activation = nn.Identity()
         else:
-            self.activation = nn.ReLU()
+            # Convert string activation name to nn.Module
+            if isinstance(activation, str):
+                activation_map = {
+                    'ReLU': nn.ReLU(),
+                    'Tanh': nn.Tanh(),
+                    'Sigmoid': nn.Sigmoid(),
+                    'Identity': nn.Identity(),
+                    'GELU': nn.GELU(),
+                    'LeakyReLU': nn.LeakyReLU(),
+                }
+                if activation not in activation_map:
+                    raise ValueError(f"Unknown activation function: {activation}. Supported: {list(activation_map.keys())}")
+                self.activation = activation_map[activation]
+            elif isinstance(activation, nn.Module):
+                self.activation = activation
+            else:
+                raise ValueError(f"Activation must be a string or nn.Module, got {type(activation)}")
 
         # Initialize weights using Xavier with gain 0.1, and set biases to zero
         self.init_weights(fixed_output, G)

@@ -34,13 +34,24 @@ class action_handler:
             run_actions = actions[actions >= 0]
         action_id = np.array(list(itertools.product(actions, range(cor_dim), range(1 + (n_cors-1) * int(C.split_actions))))).T
         n_actions = action_id.shape[1]
-        if C.one_hot_actions:
+        
+        # Check if scalar_actions is set (defaults to False if not present)
+        scalar_actions = getattr(C, 'scalar_actions', False)
+        
+        if scalar_actions:
+            # Encode actions as scalar values (the action value itself)
+            # Map each action_id to its corresponding action value
+            actions_in = [np.array([action_id[0, i]], dtype=np.float32) for i in range(n_actions)]
+            self.n_actions = 1  # Scalar encoding uses dimension 1
+        elif C.one_hot_actions:
             actions_in = [one_hot(i, n_actions) for i in range(n_actions)]
+            self.n_actions = n_actions
         else:
             actions_in = [np.random.normal(0, 1, size=n_actions) for i in range(n_actions)]
+            self.n_actions = n_actions
+        
         self.actions_in =  actions_in
         self.actions_id = action_id
-        self.n_actions = n_actions
         self.run_actions = run_actions
 
     def __call__(self, dim, cor_num, action, split_actions):
@@ -120,13 +131,23 @@ class action_handler_hyper:
         action_id = np.array(list(itertools.product(actions, range(n_branches), range(1 + (n_cors-1) * int(C.split_actions))))).T
         action_id = action_id[:, ~((action_id[0] <= 0) & (action_id[1] > 0))]
         n_actions = action_id.shape[1]
-        if C.one_hot_actions:
+        
+        # Check if scalar_actions is set (defaults to False if not present)
+        scalar_actions = getattr(C, 'scalar_actions', False)
+        
+        if scalar_actions:
+            # Encode actions as scalar values (the action value itself)
+            actions_in = [np.array([action_id[0, i]], dtype=np.float32) for i in range(n_actions)]
+            self.n_actions = 1  # Scalar encoding uses dimension 1
+        elif C.one_hot_actions:
             actions_in = [one_hot(i, n_actions) for i in range(n_actions)]
+            self.n_actions = n_actions
         else:
             actions_in = [np.random.normal(0, 1, size=n_actions) for i in range(n_actions)]
+            self.n_actions = n_actions
+        
         self.actions_in =  actions_in
         self.actions_id = action_id
-        self.n_actions = n_actions
         self.run_actions = run_actions
 
     def __call__(self, dim, cor_num, action, split_actions):
@@ -640,8 +661,15 @@ def create_data_uneven_corridors(C):
             self.n_actions = action_id.shape[1]
             self.actions_id = action_id
             
+            # Check if scalar_actions is set (defaults to False if not present)
+            scalar_actions = getattr(C, 'scalar_actions', False)
+            
             # Generate action encodings
-            if self.one_hot_actions:
+            if scalar_actions:
+                # Encode actions as scalar values (the action value itself)
+                self.actions_in = [np.array([action_id[0, i]], dtype=np.float32) for i in range(self.n_actions)]
+                self.n_actions = 1  # Scalar encoding uses dimension 1
+            elif self.one_hot_actions:
                 self.actions_in = [one_hot(i, self.n_actions) for i in range(self.n_actions)]
             else:
                 self.actions_in = [np.random.normal(0, 1, size=self.n_actions) for i in range(self.n_actions)]
@@ -853,7 +881,12 @@ def create_data_mnist(C):
     # labels = np.array(labels)
     # actions = np.array(actions)
     # Encode actions
-    if C.one_hot_actions:
+    scalar_actions = getattr(C, 'scalar_actions', False)
+    if scalar_actions:
+        # Encode actions as scalar values (the action value itself)
+        actions_in = actions.reshape(-1, 1).astype(np.float32)
+        n_actions = 1  # Scalar encoding uses dimension 1
+    elif C.one_hot_actions:
         actions_in = np.eye(n_actions, dtype=np.float32)[action_indices]
     else:
         # Random but fixed embedding per action
@@ -887,9 +920,9 @@ def create_data_mnist(C):
 
     if getattr(C, 'print_progress', False):
         print(f'Number of samples: {X.shape[0]}')
-        print(f'Input dimension: {X.shape[1]} (image {input_size} + action {n_actions})')
+        print(f'Input dimension: {X.shape[1]} (image {input_size} + action {action_dim})')
         print(f'Output dimension: {y.shape[1]} (10 classes)')
-        print(f'Number of actions: {n_actions}')
+        print(f'Number of actions: {action_dim}')
 
     return X, y, corridor, loc_X, loc_y, action_taken, dim_l, input_size, output_size, action_dim
 
@@ -980,7 +1013,13 @@ def create_data_2d_euclidean(C):
             return grid[x, y].astype(np.float32)
 
     # Action encodings
-    if C.one_hot_actions:
+    scalar_actions = getattr(C, 'scalar_actions', False)
+    if scalar_actions:
+        # For 2D actions, encode as a single scalar (using dx as the scalar value)
+        # Note: This loses dy information, so scalar encoding may not be ideal for 2D actions
+        actions_in = np.array([np.array([dx], dtype=np.float32) for dx, dy in action_space])
+        n_actions = 1  # Scalar encoding uses dimension 1
+    elif C.one_hot_actions:
         actions_in = np.eye(n_actions, dtype=np.float32)
     else:
         rng_embed = np.random.default_rng(0)

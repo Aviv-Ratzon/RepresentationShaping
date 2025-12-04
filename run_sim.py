@@ -71,6 +71,7 @@ class Config:
 
         # Data
         self.one_hot_actions=True
+        self.scalar_actions=False  # If True, encode actions as a single scalar value instead of vector
         self.one_hot_inputs=True
         self.allow_backwards=True
         self.whiten_data = False
@@ -91,6 +92,7 @@ class Config:
         self.bias = False
         self.fixed_output=False
         self.linear_net=False
+        self.activation='ReLU'  # Options: 'ReLU', 'Tanh', 'Sigmoid', 'Identity', etc.
         self.G=0.95
         self.hidden_size=100
         self.L=8
@@ -213,7 +215,7 @@ def run_sim(C: Config):
     if C.sig_h_2 and C.print_progress:
         print(f'Changed G to {C.G} to get sig_h_2 = {C.sig_h_2}')
     # Create model
-    model = DNN(input_size + n_actions, C.hidden_size, output_size, C.L, C.fixed_output, C.linear_net, C.G, C.bias).to(device)
+    model = DNN(input_size + n_actions, C.hidden_size, output_size, C.L, C.fixed_output, C.linear_net, C.G, C.bias, C.activation).to(device)
     if C.state_dict_path is not None:
         model.load_state_dict(torch.load(C.state_dict_path))
     initial_weights = deepcopy(model.state_dict())
