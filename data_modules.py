@@ -198,13 +198,13 @@ def create_data_euclidean(C):
         # vecs = [[np.eye(input_size)[sum(C.length_corridors[:i]):sum(C.length_corridors[:i+1])] for _ in range(cor_dim)] for i in range(n_cors)]
         vecs = np.eye(input_size).reshape([n_cors] + [cor_len]*cor_dim + [input_size])
     else:
-        input_size = C.input_size
-        output_size = C.input_size
-        vecs = [gaussian_filter(np.random.normal(size=(C.length_corridors[i]*3, C.input_size)),
-                                sigma=C.length_corridors[i]*C.input_smoothing)[C.length_corridors[i]:-C.length_corridors[i]] for i in range(n_cors)]
-        vecs = [vecs[i] - vecs[i].mean(axis=0) for i in range(n_cors)]
-        vecs = [vec / vec.std() for vec in vecs]
-    
+        input_size = N_inputs
+        output_size = N_inputs
+        # vecs = [gaussian_filter(np.random.normal(size=(C.length_corridors[i]*3, C.input_size)),
+        #                         sigma=C.length_corridors[i]*C.input_smoothing)[C.length_corridors[i]:-C.length_corridors[i]] for i in range(n_cors)]
+        # vecs = [vecs[i] - vecs[i].mean(axis=0) for i in range(n_cors)]
+        # vecs = [vec / vec.std() for vec in vecs]
+        vecs = np.random.normal(size=(input_size, input_size)).reshape([n_cors] + [cor_len]*cor_dim + [input_size])
     positions = list(itertools.product(*[np.arange(cor_len)]*cor_dim))
     X = []
     y = []
@@ -249,9 +249,9 @@ def create_data_euclidean(C):
     
     X = np.array(X)
     y = np.array(y)
-    if not C.one_hot_inputs:
-        X[:, :input_size] /= X[:, :input_size].std()
-        y[:, :output_size] /= y[:, :output_size].std()
+    # if not C.one_hot_inputs:
+    #     X[:, :input_size] /= X[:, :input_size].std()
+    #     y[:, :output_size] /= y[:, :output_size].std()
     
     corridor = np.array(corridor)
     loc_X = np.array(loc_X)

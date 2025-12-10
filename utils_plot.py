@@ -32,17 +32,19 @@ def plot_loss_and_dist(data_dict):
 
 
 def plot_pca(data_dict, title="", axs=None):
-    loc_y = data_dict['loc_y']
-    hidden_states = data_dict['hidden_states']
     action_taken = data_dict['action_taken']
+    cond = abs(action_taken) <= 1
+    loc_y = data_dict['loc_y'][cond]
+    hidden_states = data_dict['hidden_states']
     loss_l = data_dict['loss_l']; accuracy_l = data_dict['accuracy_l']
-    y = data_dict['y'].cpu().numpy()
+    y = data_dict['y'].cpu().numpy()[cond]
     C = data_dict['C']
-    corridor = data_dict['corridor']
-    X_np = data_dict['X'].cpu().numpy()
+    corridor = data_dict['corridor'][cond]
+    X_np = data_dict['X'].cpu().numpy()[cond]
     final_weights = data_dict['final_weights']
+    action_taken = action_taken[cond]
 
-    hidden = hidden_states[-1].cpu().detach().numpy()
+    hidden = hidden_states[-1].cpu().detach().numpy()[cond]
     hidden_dist = torch.cdist(hidden_states[-1], hidden_states[-1]).cpu().numpy()
 
     color = loc_y if C.corridor_dim == 1 else loc_y[:, 0]
@@ -92,7 +94,7 @@ def plot_pca(data_dict, title="", axs=None):
     ax2.set_ylim(-0.1, 1.1)
     axs[3].set_title("Loss")
 
-    axs[4].imshow(hidden_dist[y.argmax(1).argsort()][:, y.argmax(1).argsort()], cmap='viridis')
+    axs[4].imshow(hidden_dist[loc_y.argsort()][:, loc_y.argsort()], cmap='viridis')
     axs[4].set_title('hidden distance matrix')
     axs[4].grid(False)
 
