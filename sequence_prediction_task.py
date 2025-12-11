@@ -343,31 +343,33 @@ def plot_pca_comparison(all_hidden_states, all_y, S, A_values):
         
         # Plot with colors based on final target states
         scatter = axes[i].scatter(hidden_2d[:, 0], hidden_2d[:, 1], 
-                                c=final_state_classes, cmap='tab10', alpha=0.6, s=20)
+                                c=final_state_classes, cmap='coolwarm', alpha=0.6, s=20)
         axes[i].set_title(f'A = {A}')
         axes[i].set_xlabel(f'PC1 ({pca.explained_variance_ratio_[0]:.2%})')
         axes[i].set_ylabel(f'PC2 ({pca.explained_variance_ratio_[1]:.2%})')
         axes[i].grid(True, alpha=0.3)
+        axes[i].axis('equal')
     
     # Hide empty subplots
     for i in range(num_plots, len(axes)):
         axes[i].set_visible(False)
     
     plt.tight_layout()
+    fig.savefig('pca_comparison.png', dpi=300)
     plt.show()
 
 
 def main():
     """Main function to run the sequence prediction task for A = 1:20."""
     # Parameters
-    S = 10  # Number of states
+    S = 5  # Number of states
     A_values = list(range(1, 21))  # A = 1:20
     num_samples = 1000
     num_epochs = 1000
-    learning_rate = 0.01
-    batch_size = 32
+    learning_rate = 0.001
+    batch_size = 64
     num_layers = 8
-    nonlinear = True  # Set to True for nonlinear network
+    nonlinear = False  # Set to True for nonlinear network
     
     print(f"Sequence Prediction Task - A = 1:20")
     print(f"States: {S}, Actions per sequence: {A_values}")

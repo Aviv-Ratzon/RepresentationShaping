@@ -188,6 +188,7 @@ def create_data_euclidean(C):
     cor_len = C.length_corridors[0]
     N_inputs = sum([length**cor_dim for length in C.length_corridors])
     
+    
     action_h = action_handler(C)
     run_actions = action_h.run_actions
     n_actions = action_h.n_actions

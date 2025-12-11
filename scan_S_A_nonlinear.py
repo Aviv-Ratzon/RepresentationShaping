@@ -31,7 +31,7 @@ C.loss_fn = nn.MSELoss()
 # Sweep variables
 var_name1 = 'max_move'
 var_name2 = 'length_corridors'
-var_values2 = [[S] for S in np.arange(20, 40)]
+var_values2 = [[S] for S in np.arange(40, 50)]
 var_name3 = 'seed'
 var_values3 = np.arange(10)
 

@@ -9,6 +9,7 @@ from torch import nn, optim
 from model import DNN
 from tqdm import tqdm
 from data_modules import create_data
+from utils import calc_PR
 
 # from utils import state_dict_to_theta, theta_to_state_dict
 
@@ -141,8 +142,10 @@ def train_model(C: Config, X, y, model, action_taken):
     accuracy_l = []
     hidden_l = []
     state_dict_l = []
+    PR_l = []
     sample_inds = np.unique(np.linspace(0, C.num_epochs-1, 10000).astype(int))
     sample_inds_state_dict = np.unique(np.linspace(0, C.num_epochs-1, 100).astype(int))
+    sample_inds_PR = np.unique(np.linspace(0, C.num_epochs-1, 100).astype(int))
     for epoch in tqdm(range(C.num_epochs)) if C.print_progress else range(C.num_epochs):
         if C.B == 1:
             X_batch = X
@@ -192,12 +195,19 @@ def train_model(C: Config, X, y, model, action_taken):
                         break
                 else:
                     accuracy_l.append(0)
+            
+            if epoch in sample_inds_PR:
+                outputs, hidden_states = model(X)
+                # Compute PR for the last hidden layer
+                last_hidden = hidden_states[-1].cpu().detach().numpy()
+                PR_value = calc_PR(last_hidden)
+                PR_l.append(PR_value)
                 
         # if epoch in sample_inds_state_dict:
         #     state_dict_l.append(deepcopy(model.state_dict()))
     
     model.float()
-    return loss_l, accuracy_l, hidden_l, state_dict_l
+    return loss_l, accuracy_l, hidden_l, state_dict_l, PR_l
 
 
 def run_sim(C: Config):
@@ -220,19 +230,19 @@ def run_sim(C: Config):
         model.load_state_dict(torch.load(C.state_dict_path))
     initial_weights = deepcopy(model.state_dict())
 
-    loss_l, accuracy_l, hidden_l, state_dict_l = train_model(C, X, y, model, action_taken)
+    loss_l, accuracy_l, hidden_l, state_dict_l, PR_l = train_model(C, X, y, model, action_taken)
     # Testing
     with torch.no_grad():
         outputs, hidden_states = model(X)
     # print(criterion(outputs, y).item()/y_var)
 
 
-    return X, y, corridor, loc_X.squeeze(), loc_y.squeeze(), action_taken, hidden_states, loss_l, accuracy_l, outputs.cpu().numpy(), hidden_l, model.state_dict(), initial_weights, state_dict_l
+    return X, y, corridor, loc_X.squeeze(), loc_y.squeeze(), action_taken, hidden_states, loss_l, accuracy_l, outputs.cpu().numpy(), hidden_l, model.state_dict(), initial_weights, state_dict_l, PR_l
 
 
 
 def run_sim_wrapper(C):
-    X, y, corridor, loc_X, loc_y, action_taken, hidden_states, loss_l, accuracy_l, outputs, hidden_l, final_weights, initial_weights, state_dict_l = run_sim(C)
+    X, y, corridor, loc_X, loc_y, action_taken, hidden_states, loss_l, accuracy_l, outputs, hidden_l, final_weights, initial_weights, state_dict_l, PR_l = run_sim(C)
 
     data_dict = {
         'X': X,
@@ -249,7 +259,8 @@ def run_sim_wrapper(C):
         'initial_weights': initial_weights,
         'final_weights': final_weights,
         'C': C,
-        'state_dict_l': state_dict_l
+        'state_dict_l': state_dict_l,
+        'PR_l': PR_l
     }
 
     return data_dict
