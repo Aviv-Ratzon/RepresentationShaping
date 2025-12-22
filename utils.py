@@ -10,7 +10,6 @@ from scipy.sparse.linalg import svds
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 from tqdm import tqdm
-from run_sim import run_sim_wrapper
 
 
 def state_dict_to_theta(model_dict):

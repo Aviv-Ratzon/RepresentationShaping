@@ -1,5 +1,12 @@
 /.idea
 /.venv
+/**/.ipynb_checkpoints/
+*.swp
+/venv
+/.tox
+/.mypy_cache
+/.pytest_cache
+/.ruff_cache
 /.vscode
 /results
 /final_results/results
@@ -13,6 +20,10 @@ __pycache__/*
 __pycache__/run_sim.cpython-310.pyc
 /PRECO
 /data/*
+/MNIST_small/*
 *.png
 *.jpg
 *.pth
+/saved_models
+/checkpoints
+/checkpoints_non_cyclic
