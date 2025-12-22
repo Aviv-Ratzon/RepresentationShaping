@@ -10,6 +10,15 @@ from sklearn.decomposition import PCA
 np.random.seed(42)
 torch.manual_seed(42)
 
+# Set device (GPU if available, else CPU)
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(42)
+    torch.cuda.manual_seed_all(42)
+    print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+else:
+    print("Using CPU")
+
 # Parameters
 ds = 0.1
 S = 1.0  # Range for s: [-S, S]
@@ -94,12 +103,12 @@ def train_model(A, S, ds, num_epochs=10, batch_size=256, learning_rate=0.001):
     # Generate training data
     inputs, targets, s_vals, a_vals = generate_training_data(A, S, ds)
     
-    # Convert to tensors
-    X = torch.FloatTensor(inputs)
-    y = torch.FloatTensor(targets)
+    # Convert to tensors and move to device
+    X = torch.FloatTensor(inputs).to(device)
+    y = torch.FloatTensor(targets).to(device)
     
-    # Create model
-    model = DeepFCN(input_dim=X.shape[1], hidden_dims=[128, 128, 128, 128], output_dim=y.shape[1])
+    # Create model and move to device
+    model = DeepFCN(input_dim=X.shape[1], hidden_dims=[128, 128, 128, 128], output_dim=y.shape[1]).to(device)
     criterion = nn.MSELoss()
     optimizer = optim.SGD(model.parameters(), lr=learning_rate)
     
@@ -110,7 +119,7 @@ def train_model(A, S, ds, num_epochs=10, batch_size=256, learning_rate=0.001):
     model.train()
     for epoch in tqdm(range(num_epochs), desc=f"Training (A={A})"):
         # Shuffle data
-        indices = torch.randperm(len(X))
+        indices = torch.randperm(len(X), device=device)
         X_shuffled = X[indices]
         y_shuffled = y[indices]
         
@@ -161,10 +170,10 @@ def plot_all_results(all_results, S, ds_plot):
         # Get predictions from model
         model.eval()
         with torch.no_grad():
-            X_plot = torch.FloatTensor(inputs_plot)
+            X_plot = torch.FloatTensor(inputs_plot).to(device)
             predictions, hidden = model(X_plot)
-            predictions = predictions.numpy()
-            hidden = hidden.numpy()
+            predictions = predictions.cpu().numpy()
+            hidden = hidden.cpu().numpy()
         
         # Filter training samples where a=0 (for plotting)
         mask_a_zero = np.abs(a_train) < 1e-10  # Find samples where a ≈ 0
