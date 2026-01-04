@@ -82,6 +82,7 @@ class Config:
         self.max_move= 15
         self.min_move=0
         self.input_size=100
+        self.output_size=100
         self.corridor_dim = 1
         self.input_smoothing = 0
         self.mask_states = None

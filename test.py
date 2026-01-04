@@ -26,11 +26,12 @@ ds = 0.05
 S = 1.0  # Range for s: [-S, S]
 ds_plot = ds / 100  # Interval for plotting
 v = np.random.randn(10)[None,:]
+predictor_layers = [1000]*5
 
 # Values of A to test
-A_values = [ds, S/2]
+A_values = [ds, S]
 lr = 0.00001
-n_epochs = 100000
+n_epochs = 10000
 optimizer_fn = torch.optim.Adam
 
 def poly(x):
@@ -40,13 +41,13 @@ def f(s, a=None):
     if a is None:
         a = np.zeros_like(s)        
     x = (s + a)[:,None]@v
-    x_periodic = np.sin(2 * 2*np.pi*(s + a)[:,None]@v)
+    x_periodic = 2*np.sin(2 * 2*np.pi*(s + a)[:,None]@v)
     return np.tanh(x_periodic)
     # return 0.1*poly(x_periodic)
 
 # Define the neural network
 class DeepFCN(nn.Module):
-    def __init__(self, input_dim=2, hidden_dims=[100, 100, 100, 100], output_dim=1):
+    def __init__(self, input_dim, hidden_dims, output_dim):
         super(DeepFCN, self).__init__()
         layers = []
         prev_dim = input_dim
@@ -107,7 +108,7 @@ def generate_training_data(A, S, ds):
     
     return inputs, targets, s_flat, a_flat
 
-def train_model(A, S, ds, num_epochs=10, batch_size=256, learning_rate=0.001):
+def train_model(A, S, ds, num_epochs=10, batch_size=64, learning_rate=0.001):
     """Train a deep fully connected network."""
     # Generate training data
     inputs, targets, s_vals, a_vals = generate_training_data(A, S, ds)
@@ -117,7 +118,7 @@ def train_model(A, S, ds, num_epochs=10, batch_size=256, learning_rate=0.001):
     y = torch.FloatTensor(targets).to(device)
     
     # Create model and move to device
-    model = DeepFCN(input_dim=X.shape[1], hidden_dims=[128, 128, 128, 128, 128, 128, 128, 128], output_dim=y.shape[1]).to(device)
+    model = DeepFCN(input_dim=X.shape[1], hidden_dims=predictor_layers, output_dim=y.shape[1]).to(device)
     criterion = nn.MSELoss()
     optimizer = optimizer_fn(model.parameters(), lr=learning_rate)
     
@@ -158,18 +159,20 @@ def train_model(A, S, ds, num_epochs=10, batch_size=256, learning_rate=0.001):
     
     return model, s_vals, a_vals, targets, train_losses
 
-def train_hidden_to_target_model(original_model, X, y, hidden_dim=128, num_epochs=1000, batch_size=256, learning_rate=0.001):
+def train_hidden_to_target_model(original_model, X, y, hidden_dim=1000, num_epochs=10000, batch_size=256, learning_rate=0.001):
     """Train a single hidden layer model to map hidden activations to targets."""
     # Get hidden activations from the original model
-    inputs, targets, s_vals, a_vals = generate_training_data(1e-10, S, ds/100)
-    
-    # Convert to tensors and move to device
+    inputs, targets, s_vals, a_vals = generate_training_data(1e-10, S, ds)
     X = torch.FloatTensor(inputs).to(device)
     y = torch.FloatTensor(targets).to(device)
+    inputs_test, targets_test, s_vals_test, a_vals_test = generate_training_data(1e-10, S, ds/100)
+    X_test = torch.FloatTensor(inputs_test).to(device)
+    y_test = torch.FloatTensor(targets_test).to(device)
 
     original_model.eval()
     with torch.no_grad():
         _, hidden_activations = original_model(X)
+        _, hidden_activations_test = original_model(X_test)
     
     # Get the hidden dimension size
     hidden_size = hidden_activations.shape[1]
@@ -180,10 +183,15 @@ def train_hidden_to_target_model(original_model, X, y, hidden_dim=128, num_epoch
     criterion = nn.MSELoss()
     optimizer = optim.Adam(hidden_model.parameters(), lr=learning_rate)
     
+    # Track training loss
+    hidden_train_losses = []
+    hidden_test_losses = []
+    
     # Training loop
     hidden_model.train()
     for epoch in tqdm(range(num_epochs), desc="Training hidden-to-target model"):
         # Shuffle data
+        hidden_model.train()
         indices = torch.randperm(len(hidden_activations), device=device)
         h_shuffled = hidden_activations[indices]
         y_shuffled = y[indices]
@@ -210,24 +218,26 @@ def train_hidden_to_target_model(original_model, X, y, hidden_dim=128, num_epoch
         
         # Store average loss for this epoch
         avg_loss = epoch_loss / num_batches
+        hidden_train_losses.append(avg_loss)
     
-    # Calculate final MSE
-    hidden_model.eval()
-    with torch.no_grad():
-        final_outputs = hidden_model(hidden_activations)
-        final_mse = criterion(final_outputs, y).item()
+        if epoch // (num_epochs/100) == 0:
+            hidden_model.eval()
+            with torch.no_grad():
+                final_outputs = hidden_model(hidden_activations_test)
+                final_mse = criterion(final_outputs, y_test).item()
+                hidden_test_losses.append(final_mse)
     
     print(f"Hidden-to-target model final MSE: {final_mse:.6f}")
     
-    return hidden_model, final_mse
+    return hidden_model, final_mse, hidden_train_losses, hidden_test_losses
 
 def plot_all_results(all_results, S, ds_plot):
     """Plot results from all A values in a single figure."""
     num_A = len(all_results)
     
-    # Create figure with subplots: N rows (one per A), 4 columns (predictions, loss, PCA hidden, PCA targets)
-    n_plots = 5
-    fig, axes = plt.subplots(num_A, n_plots, figsize=(3*n_plots, 3*num_A))
+    # Create figure with subplots: N rows (one per A), 6 columns (predictions, predictions2, loss, PCA hidden, PCA targets, hidden-to-target loss)
+    n_plots = 6
+    fig, axes = plt.subplots(num_A, n_plots, figsize=(3*n_plots, 3*num_A), sharey='col')
     
     # Handle case where there's only one A value
     if num_A == 1:
@@ -239,7 +249,7 @@ def plot_all_results(all_results, S, ds_plot):
     # Compute color values: s_vals_plot + a_vals_plot
     color_values = s_vals_plot + a_vals_plot
     
-    for idx, (A, model, s_train, a_train, targets_train, train_losses) in enumerate(all_results):
+    for idx, (A, model, s_train, a_train, targets_train, train_losses, hidden_train_losses, hidden_test_losses) in enumerate(all_results):
         # Get predictions from model
         model.eval()
         with torch.no_grad():
@@ -259,8 +269,8 @@ def plot_all_results(all_results, S, ds_plot):
         # Left subplot: Function predictions
         ax_i = 0
         ax_pred = axes[idx, ax_i]
-        ax_pred.plot(s_vals_plot, targets_plot[:,0], 'b-', label='True: f(x, 0)', linewidth=2)
-        ax_pred.plot(s_vals_plot, predictions[:,0], 'r--', label='Predicted', linewidth=2, alpha=0.7)
+        ax_pred.plot(s_vals_plot, targets_plot[:,0], 'b-', label='True: f(x, 0)')
+        ax_pred.plot(s_vals_plot, predictions[:,0], 'r--', label='Predicted', alpha=0.7)
         ax_pred.scatter(s_train_a0, targets_train_a0, c='green', s=30, alpha=0.6, 
                         label='Training samples (a=0)', zorder=5)
         ax_pred.set_xlabel('x', fontsize=6)
@@ -273,8 +283,8 @@ def plot_all_results(all_results, S, ds_plot):
         targets_train_a0 = targets_train[mask_a_zero, 1]
         ax_i += 1
         ax_pred = axes[idx, ax_i]
-        ax_pred.plot(s_vals_plot, targets_plot[:,1], 'b-', label='True: f(x, 0)', linewidth=2)
-        ax_pred.plot(s_vals_plot, predictions[:,1], 'r--', label='Predicted', linewidth=2, alpha=0.7)
+        ax_pred.plot(s_vals_plot, targets_plot[:,1], 'b-', label='True: f(x, 0)')
+        ax_pred.plot(s_vals_plot, predictions[:,1], 'r--', label='Predicted', alpha=0.7)
         ax_pred.scatter(s_train_a0, targets_train_a0, c='green', s=30, alpha=0.6, 
                         label='Training samples (a=0)', zorder=5)
         ax_pred.set_xlabel('x', fontsize=6)
@@ -287,7 +297,7 @@ def plot_all_results(all_results, S, ds_plot):
         ax_i += 1
         ax_loss = axes[idx, ax_i]
         epochs = np.arange(1, len(train_losses) + 1)
-        ax_loss.plot(epochs, train_losses, 'm-', linewidth=2, marker='o', markersize=4)
+        ax_loss.plot(epochs, train_losses)
         ax_loss.set_xlabel('Epoch', fontsize=6)
         ax_loss.set_ylabel('Training Loss (MSE)', fontsize=6)
         ax_loss.set_title(f'Training Loss Curve (A={A:.3f})', fontsize=7)
@@ -330,6 +340,20 @@ def plot_all_results(all_results, S, ds_plot):
         plt.colorbar(scatter_targets, ax=ax_pca_targets, label='s+a')
         ax_pca_targets.grid(True, alpha=0.3)
         
+        # Fifth subplot: Hidden-to-target training loss curve
+        ax_i += 1
+        ax_hidden_loss = axes[idx, ax_i]
+        hidden_epochs = np.arange(1, len(hidden_train_losses) + 1)
+        hidden_epochs_test = np.linspace(1, len(hidden_train_losses), len(hidden_test_losses))
+        ax_hidden_loss.plot(hidden_epochs, hidden_train_losses, 'c-', label='Training')
+        ax_hidden_loss.plot(hidden_epochs_test, hidden_test_losses, 'c--', label='Test')
+        ax_hidden_loss.legend(fontsize=5.5)
+        ax_hidden_loss.set_xlabel('Epoch', fontsize=6)
+        ax_hidden_loss.set_ylabel('Hidden-to-Target Loss (MSE)', fontsize=6)
+        ax_hidden_loss.set_title(f'Hidden-to-Target Loss (A={A:.3f})', fontsize=7)
+        ax_hidden_loss.grid(True, alpha=0.3)
+        ax_hidden_loss.set_yscale('log')  # Use log scale for better visualization
+        
         # Print error statistics
         mae = np.mean(np.abs(predictions - targets_plot))
         print(f"\nA={A:.3f} - MSE: {mse:.6f}, MAE: {mae:.6f}")
@@ -357,15 +381,15 @@ if __name__ == "__main__":
         y = torch.FloatTensor(targets).to(device)
         
         # Train hidden-to-target model
-        hidden_model, hidden_mse = train_hidden_to_target_model(
+        hidden_model, hidden_mse, hidden_train_losses, hidden_test_losses = train_hidden_to_target_model(
             model, X, y, 
-            hidden_dim=128, 
+            hidden_dim=1000, 
             num_epochs=1000, 
             learning_rate=0.001
         )
         
         # Store results
-        all_results.append((A, model, s_train, a_train, targets_train, train_losses))
+        all_results.append((A, model, s_train, a_train, targets_train, train_losses, hidden_train_losses, hidden_test_losses))
         
         print(f"Completed processing for A = {A}\n")
     

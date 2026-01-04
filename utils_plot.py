@@ -45,7 +45,7 @@ def plot_pca(data_dict, title="", axs=None):
     action_taken = action_taken[cond]
 
     hidden = hidden_states[-1].cpu().detach().numpy()[cond]
-    hidden_dist = torch.cdist(hidden_states[-1], hidden_states[-1]).cpu().numpy()
+    hidden_dist = torch.cdist(hidden_states[-1][cond], hidden_states[-1][cond]).cpu().numpy()
 
     color = loc_y if C.corridor_dim == 1 else loc_y[:, 0]
 
@@ -94,7 +94,7 @@ def plot_pca(data_dict, title="", axs=None):
     ax2.set_ylim(-0.1, 1.1)
     axs[3].set_title("Loss")
 
-    axs[4].imshow(hidden_dist[loc_y.argsort()][:, loc_y.argsort()], cmap='viridis')
+    axs[4].imshow(hidden_dist[color.argsort()][:, color.argsort()], cmap='viridis')
     axs[4].set_title('hidden distance matrix')
     axs[4].grid(False)
 

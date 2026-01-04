@@ -195,17 +195,19 @@ def create_data_euclidean(C):
     
     if C.one_hot_inputs:
         input_size = N_inputs
-        output_size = N_inputs
-        # vecs = [[np.eye(input_size)[sum(C.length_corridors[:i]):sum(C.length_corridors[:i+1])] for _ in range(cor_dim)] for i in range(n_cors)]
-        vecs = np.eye(input_size).reshape([n_cors] + [cor_len]*cor_dim + [input_size])
+        vecs_in = np.eye(input_size).reshape([n_cors] + [cor_len]*cor_dim + [input_size])
     else:
-        input_size = N_inputs
-        output_size = N_inputs
-        # vecs = [gaussian_filter(np.random.normal(size=(C.length_corridors[i]*3, C.input_size)),
-        #                         sigma=C.length_corridors[i]*C.input_smoothing)[C.length_corridors[i]:-C.length_corridors[i]] for i in range(n_cors)]
+        input_size = C.input_size
+        vecs_in = np.random.normal(size=[n_cors] + [cor_len]*cor_dim + [C.input_size])
         # vecs = [vecs[i] - vecs[i].mean(axis=0) for i in range(n_cors)]
         # vecs = [vec / vec.std() for vec in vecs]
-        vecs = np.random.normal(size=(input_size, input_size)).reshape([n_cors] + [cor_len]*cor_dim + [input_size])
+        # vecs = np.random.normal(size=(input_size, input_size)).reshape([n_cors] + [cor_len]*cor_dim + [input_size])
+    if C.one_hot_outputs:
+        output_size = N_inputs
+        vecs_out = np.eye(output_size).reshape([n_cors] + [cor_len]*cor_dim + [output_size])
+    else:
+        output_size = C.output_size
+        vecs_out = np.random.normal(size=[n_cors] + [cor_len]*cor_dim + [output_size])
     positions = list(itertools.product(*[np.arange(cor_len)]*cor_dim))
     X = []
     y = []
@@ -215,7 +217,7 @@ def create_data_euclidean(C):
     action_taken = []
     dim_l = []
     
-    for cor, vec in enumerate(vecs):
+    for cor, (vec_in, vec_out) in enumerate(zip(vecs_in, vecs_out)):
         for loc in positions:
             for dim in range(cor_dim):
                 for a in run_actions:
@@ -231,7 +233,7 @@ def create_data_euclidean(C):
                         next_loc[dim] = next_loc[dim] % C.length_corridors[cor]
                     
                     action_in = action_h(dim, cor, a, int(C.split_actions))
-                    v = recursive_indexing(vec, loc)
+                    v = recursive_indexing(vec_in, loc)
                     
                     if C.mask_states and any(
                         tuple([loc[i] + (step if i == dim else 0) for i in range(len(loc))]) in C.mask_states
@@ -239,7 +241,7 @@ def create_data_euclidean(C):
                     ):
                         continue
                     
-                    v_next = recursive_indexing(vec, next_loc)
+                    v_next = recursive_indexing(vec_out, next_loc)
                     corridor.append(cor)
                     dim_l.append(dim)
                     loc_X.append(loc)
