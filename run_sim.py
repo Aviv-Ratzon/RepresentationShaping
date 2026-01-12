@@ -74,6 +74,7 @@ class Config:
         self.one_hot_actions=True
         self.scalar_actions=False  # If True, encode actions as a single scalar value instead of vector
         self.one_hot_inputs=True
+        self.one_hot_outputs=True
         self.allow_backwards=True
         self.whiten_data = False
         self.split_actions=True

@@ -31,9 +31,9 @@ def plot_loss_and_dist(data_dict):
     plt.show()
 
 
-def plot_pca(data_dict, title="", axs=None):
+def plot_pca(data_dict, title="", axs=None, action_filter=1):
     action_taken = data_dict['action_taken']
-    cond = abs(action_taken) <= 1
+    cond = abs(action_taken) <= action_filter
     loc_y = data_dict['loc_y'][cond]
     hidden_states = data_dict['hidden_states']
     loss_l = data_dict['loss_l']; accuracy_l = data_dict['accuracy_l']
@@ -48,6 +48,7 @@ def plot_pca(data_dict, title="", axs=None):
     hidden_dist = torch.cdist(hidden_states[-1][cond], hidden_states[-1][cond]).cpu().numpy()
 
     color = loc_y if C.corridor_dim == 1 else loc_y[:, 0]
+    color2 = action_taken
 
     PR = calc_PR(hidden)
     if not C.bias:
@@ -81,11 +82,15 @@ def plot_pca(data_dict, title="", axs=None):
     for cor, marker in zip(np.unique(corridor), markers):
         ax1.scatter(X_reduced[corridor==cor, 0], X_reduced[corridor==cor, 1], c=color[corridor==cor], cmap='coolwarm', alpha=0.7, marker=marker)
     ax1.set_xlabel(f'Component 1')
-    ax1.set_ylabel(f'Component 2'),
+    ax1.set_ylabel(f'Component 2')
     ax1.axis('equal')
 
     ax1 = axs[2]
-    ax1.scatter(X_reduced[:, 0], color, c=color)
+    for cor, marker in zip(np.unique(corridor), markers):
+        ax1.scatter(X_reduced[corridor==cor, 0], X_reduced[corridor==cor, 1], c=color2[corridor==cor], cmap='coolwarm', alpha=0.7, marker=marker)
+    ax1.set_xlabel(f'Component 1')
+    ax1.set_ylabel(f'Component 2')
+    ax1.axis('equal')
 
     axs[3].plot(loss_l)
     axs[3].set_yscale('log')

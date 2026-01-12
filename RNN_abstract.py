@@ -32,6 +32,7 @@ import torch.nn as nn
 import torch
 import torch.nn as nn
 
+
 class LinearRNN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, n_layers):
         super().__init__()
@@ -47,8 +48,14 @@ class LinearRNN(nn.Module):
 
         for l in range(n_layers):
             in_size = input_size if l == 0 else hidden_size
-            self.W_ih.append(nn.Parameter(torch.randn(hidden_size, in_size) * 0.1))
-            self.W_hh.append(nn.Parameter(torch.randn(hidden_size, hidden_size) * 0.1))
+            # Orthogonal initialization with alpha=0.95
+            W_ih = torch.empty(hidden_size, in_size)
+            nn.init.normal_(W_ih, mean=0.0, std=0.1/np.sqrt(in_size))
+            self.W_ih.append(nn.Parameter(W_ih))
+
+            W_hh = torch.empty(hidden_size, hidden_size)
+            nn.init.normal_(W_hh, mean=0.0, std=0.1/np.sqrt(hidden_size))
+            self.W_hh.append(nn.Parameter(W_hh))
             self.bias.append(nn.Parameter(torch.zeros(hidden_size)))
 
         # Linear readout applied on the last layer
@@ -76,6 +83,8 @@ class LinearRNN(nn.Module):
 
         for t in range(T):
             inp = x[:, t]  # (B, input_size)
+            if inp[0,:-3].sum() > 0:
+                h = torch.zeros(self.n_layers, B, self.hidden_size, device=x.device)
             new_h = []
 
             for l in range(self.n_layers):
@@ -136,7 +145,7 @@ class StandardRNN(nn.Module):
         return outputs, h
 
 
-def train_and_plot(config):
+def train_and_plot(config, debug=False):
     """Train model and generate plot for given A, num_layers, and loss_fn"""
     # A, num_layers, loss_fn_name, gpu_id = args
     A = config['A']
@@ -153,12 +162,15 @@ def train_and_plot(config):
     else:
         device = torch.device('cpu')
     
-    S = 40
+    S = 10
     X = []
     y = []
     actions_in = [[1,0,0], [0,1,0], [0,0,1]]
     actions = [-1, 0, 1]
     states_obs = np.eye(S)
+    n_epochs = 10000
+
+    loop_wrapper = tqdm if debug else lambda x: x
 
     # Generate data based on A, all lengths
     # for s in range(S):
@@ -181,28 +193,53 @@ def train_and_plot(config):
     #             X.append(X_curr)
                 # y.append(y_curr)
 
-    # Generate data based on A, only length A
-    for s in range(S):
-        for a, a_in in zip(actions, actions_in):
-            n_actions = A
-            s_curr = s
-            a_curr = a
-            a_in_curr = a_in
-            X_curr = []
-            y_curr = []
-            for action_num in range(A):
-                if (((s_curr + a_curr) < 0) or ((s_curr + a_curr) >= S)) & ('linear' in data_type):
-                    a_curr = 0
-                    a_in_curr = actions_in[1]
-                X_curr.append(np.concatenate([states_obs[s_curr]*int(action_num==0), a_in_curr]))
-                s_curr = (s_curr + a_curr) % S
-                y_curr.append(states_obs[s_curr])
-            X.append(X_curr)
-            y.append(y_curr)
+    # # Generate data based on A, only length A
+    # for s in range(S):
+    #     for a, a_in in zip(actions, actions_in):
+    #         n_actions = A
+    #         s_curr = s
+    #         a_curr = a
+    #         a_in_curr = a_in
+    #         X_curr = []
+    #         y_curr = []
+    #         for action_num in range(A):
+    #             if (((s_curr + a_curr) < 0) or ((s_curr + a_curr) >= S)) & ('linear' in data_type):
+    #                 a_curr = 0
+    #                 a_in_curr = actions_in[1]
+    #             X_curr.append(np.concatenate([states_obs[s_curr]*int(action_num==0), a_in_curr]))
+    #             s_curr = (s_curr + a_curr) % S
+    #             y_curr.append(states_obs[s_curr])
+    #         X.append(X_curr)
+    #         y.append(y_curr)
+
+    # Generate one long sequence
+    traj_length = 100
+    N_traj = 10
+    for traj in loop_wrapper(range(N_traj)):
+        X_curr_l = []
+        y_curr_l = []
+        s_curr = np.random.randint(0, S)
+        for t in range(traj_length):
+            if data_type == 'linear':
+                available_actions = [1,2] if s_curr == 0 else [0,1] if s_curr == S-1 else [0,1,2]
+            elif data_type == 'cyclic':
+                available_actions = [0,1,2]
+            action_id = np.random.choice(available_actions)
+            a_curr = actions[action_id]
+            a_in_curr = actions_in[action_id]
+            mask_obs = t % A == 0
+            X_curr = np.concatenate([states_obs[s_curr]*mask_obs, a_in_curr])
+            s_curr = (s_curr + a_curr) % S
+            y_curr = states_obs[s_curr]
+            X_curr_l.append(X_curr)
+            y_curr_l.append(y_curr)
+        X.append(X_curr_l)
+        y.append(y_curr_l)
+
 
     X = np.array(X)
     y = np.array(y)
-
+    
     # Prepare data for PyTorch: (N, T, F)
     X_tensor = torch.tensor(X, dtype=torch.float32, device=device)  # shape: (N, T, F)
     y_tensor = torch.tensor(y, dtype=torch.float32, device=device)  # shape: (N, T, F_s)
@@ -226,13 +263,12 @@ def train_and_plot(config):
     
     optimizer = optim.Adam(model.parameters(), lr=1e-4)
 
-    n_epochs = 50000
 
     loss_list = []
     acc_list = []
 
     # Training loop (without progress bar for cleaner multiprocessing output)
-    for epoch in range(n_epochs):
+    for epoch in loop_wrapper(range(n_epochs)):
         optimizer.zero_grad()
         output, h_l = model(X_tensor)  # (N, T, F_s)
         # CrossEntropyLoss expects (N, C) and (N) for 2d case, so flatten batch and seq
@@ -271,7 +307,7 @@ def train_and_plot(config):
     curr_action = X.reshape(-1, S+3)[:,-3:].argmax(axis=1)
 
     # Compute distance matrix of hidden states (cosine for example)
-    dists = squareform(pdist(hidden_reshaped.T, metric='cosine'))
+    dists = squareform(pdist(hidden_reshaped.T, metric='euclidean'))
 
     # Ensure the output directory exists
     sub_path = '/'.join(['_'.join([s1, str(s2)]) for s1, s2 in zip(list(config.keys())[:-2], list(config.values())[:-2])])
@@ -319,23 +355,26 @@ def train_and_plot(config):
     # 2. 2D PCA projection
     ax = axes[0]
     sc = ax.scatter(hidden_pca[:, 0], hidden_pca[:, 1], c=target_pos, cmap='coolwarm', alpha=0.6)
-    ax.set_xlabel('PC 1')
-    ax.set_ylabel('PC 2')
+    ax.set_xlabel(f'PC 1 ({explained_variance_ratio[0]*100:.1f}% var)')
+    ax.set_ylabel(f'PC 2 ({explained_variance_ratio[1]*100:.1f}% var)')
     ax.set_title('2D PCA Projection of Hidden States')
+    ax.axis('equal')
     plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, label='Next State')
     
     ax = axes[1]
     sc = ax.scatter(hidden_pca[:, 0], hidden_pca[:, 1], c=curr_pos, cmap='coolwarm', alpha=0.6)
-    ax.set_xlabel('PC 1')
-    ax.set_ylabel('PC 2')
+    ax.set_xlabel(f'PC 1 ({explained_variance_ratio[0]*100:.1f}% var)')
+    ax.set_ylabel(f'PC 2 ({explained_variance_ratio[1]*100:.1f}% var)')
     ax.set_title('2D PCA Projection of Hidden States')
+    ax.axis('equal')
     plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, label='Current State')
     
     ax = axes[2]
     sc = ax.scatter(hidden_pca[:, 0], hidden_pca[:, 1], c=curr_action, cmap='coolwarm', alpha=0.6)
-    ax.set_xlabel('PC 1')
-    ax.set_ylabel('PC 2')
+    ax.set_xlabel(f'PC 1 ({explained_variance_ratio[0]*100:.1f}% var)')
+    ax.set_ylabel(f'PC 2 ({explained_variance_ratio[1]*100:.1f}% var)')
     ax.set_title('2D PCA Projection of Hidden States')
+    ax.axis('equal')
     plt.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, label='Current Action')
 
     plt.tight_layout()
@@ -356,33 +395,22 @@ if __name__ == '__main__':
 
     # Sweep parameters - get all dicts with unique value combinations of keys
     config_dict = {
-        'net_type': ['linear', 'nonlinear'],
-        'data_type': ['linear', 'cyclic'],
+        'net_type': ['linear'], #['linear', 'nonlinear'],
+        'data_type': ['linear'], # ['linear', 'cyclic'],
         'loss_fn': [nn.CrossEntropyLoss(), nn.MSELoss()],
-        'num_layers':  [1, 5],
-        'A': list(range(1, 20)),
+        'num_layers':  [1],
+        'A': list(range(1, 10)),
     }
 
     # Get list of all dicts with all key-value combinations
     keys, values = zip(*config_dict.items())
     all_configs = [dict(zip(keys, v)) for v in product(*values)]
     all_configs = [{**dict, 'gpu_id': i % num_gpus} for i, dict in enumerate(all_configs)]
-    # A_values = list(range(1, 20))  # [1, 15]
-    # num_layers_values = [1, 5]  # [1, 5]
-    # loss_fn_names = ['CrossEntropyLoss', 'MSELoss']
-    
-    # Create all combinations of (A, num_layers, loss_fn_name)
-    # param_combinations = list(itertools.product(A_values, num_layers_values, loss_fn_names))
-    
-    # Assign GPU IDs in round-robin fashion
-    # tasks = [(A, num_layers, loss_fn_name, i % num_gpus) for i, (A, num_layers, loss_fn_name) in enumerate(param_combinations)]
+    # train_and_plot(all_configs[6], debug=True)
     
     print(f'Total jobs: {len(all_configs)}')
     print(f'Running on {num_gpus} GPU(s)')
     
-    # Use multiprocessing Pool
-    # Use spawn method for better GPU isolation
-    # Use more processes than GPUs to allow parallel jobs per GPU (if memory allows)
     num_processes = min(len(all_configs), num_gpus * 2) if torch.cuda.is_available() else mp.cpu_count()
     print(f'Using {num_processes} processes')
     

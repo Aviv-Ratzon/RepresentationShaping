@@ -390,14 +390,14 @@ class Generator(nn.Module):
 
 class Discriminator(nn.Module):
     """
-    Discriminator D(x) that classifies images into 11 classes (0-9 + fake).
+    Discriminator D(x) with auxiliary classifier (AC-GAN architecture).
+    Two heads: real/fake classification and digit class classification.
     
     Args:
         input_channels: Number of input channels (1 for MNIST)
-        num_classes: Number of classes (11: 0-9 + fake)
     """
     
-    def __init__(self, input_channels=1, num_classes=11):
+    def __init__(self, input_channels=1):
         super(Discriminator, self).__init__()
         
         self.conv_layers = nn.Sequential(
@@ -417,13 +417,23 @@ class Discriminator(nn.Module):
             nn.LeakyReLU(0.2),
         )
         
-        self.classifier = nn.Linear(256, num_classes)
+        # Real/fake classification head (binary)
+        self.real_fake_head = nn.Linear(256, 1)
+        
+        # Digit class classification head (10 classes: 0-9)
+        self.digit_class_head = nn.Linear(256, 10)
     
     def forward(self, x):
         features = self.conv_layers(x)  # [B, 256, 1, 1]
         features = features.view(features.size(0), -1)  # [B, 256]
-        logits = self.classifier(features)  # [B, 11]
-        return logits
+        
+        # Real/fake logits (binary classification)
+        real_fake_logits = self.real_fake_head(features)  # [B, 1]
+        
+        # Digit class logits (10 classes)
+        digit_class_logits = self.digit_class_head(features)  # [B, 10]
+        
+        return real_fake_logits, digit_class_logits
 
 
 class MNISTActionGAN:
@@ -531,8 +541,7 @@ class MNISTActionGAN:
         ).to(self.device)
         
         self.discriminator = Discriminator(
-            input_channels=1,
-            num_classes=11
+            input_channels=1
         ).to(self.device)
         
         # Use DataParallel if multiple GPUs available
@@ -587,26 +596,36 @@ class MNISTActionGAN:
         )
     
     def train_discriminator(self, real_images, real_labels, fake_images, fake_labels):
-        """Train discriminator for one step."""
+        """Train discriminator for one step (AC-GAN with two heads)."""
         self.optimizer_D.zero_grad()
         
         batch_size = real_images.size(0)
         
-        # Real images: classify as their true labels (0-9)
-        real_logits = self.discriminator(real_images)
-        real_loss = F.cross_entropy(real_logits, real_labels)
+        # Real images: get both real/fake and digit class predictions
+        real_rf_logits, real_digit_logits = self.discriminator(real_images)
         
-        # Fake images: classify as fake (class 10)
-        fake_logits = self.discriminator(fake_images)
-        fake_labels_tensor = torch.full((batch_size,), 10, dtype=torch.long, device=self.device)
-        fake_loss = F.cross_entropy(fake_logits, fake_labels_tensor)
+        # Real images should be classified as real (1) and correct digit class
+        real_rf_targets = torch.ones(batch_size, 1, dtype=torch.float32, device=self.device)
+        real_rf_loss = F.binary_cross_entropy_with_logits(real_rf_logits, real_rf_targets)
+        real_digit_loss = F.cross_entropy(real_digit_logits, real_labels)
         
+        # Fake images: get both real/fake and digit class predictions
+        fake_rf_logits, fake_digit_logits = self.discriminator(fake_images)
+        
+        # Fake images should be classified as fake (0) and target digit class
+        fake_rf_targets = torch.zeros(batch_size, 1, dtype=torch.float32, device=self.device)
+        fake_rf_loss = F.binary_cross_entropy_with_logits(fake_rf_logits, fake_rf_targets)
+        fake_digit_loss = F.cross_entropy(fake_digit_logits, fake_labels)
+        
+        # Total discriminator loss: real/fake classification + digit classification
+        real_loss = real_rf_loss + real_digit_loss
+        fake_loss = fake_rf_loss + fake_digit_loss
         d_loss = real_loss + fake_loss
         
-        # Add gradient penalty if enabled
-        if self.args.use_gradient_penalty:
-            gp = self._compute_gradient_penalty(real_images, fake_images)
-            d_loss += self.args.gp_weight * gp
+        # # Add gradient penalty if enabled
+        # if self.args.use_gradient_penalty:
+        #     gp = self._compute_gradient_penalty(real_images, fake_images)
+        #     d_loss += self.args.gp_weight * gp
         
         d_loss = self.args.d_loss_weight * d_loss
         d_loss.backward()
@@ -646,20 +665,22 @@ class MNISTActionGAN:
         # Generate fake images
         fake_images = self.generator(z)
         
-        # Standard GAN loss: fake images should be classified as real (not fake)
-        fake_logits = self.discriminator(fake_images)
-        fake_labels_tensor = torch.full((fake_logits.size(0),), 10, dtype=torch.long, device=self.device)
+        # Get discriminator predictions (AC-GAN: two heads)
+        fake_rf_logits, fake_digit_logits = self.discriminator(fake_images)
         
-        # Generator wants to fool discriminator (make fake images look real)
-        # So we want fake_logits to NOT be classified as class 10 (fake)
-        gan_loss = F.cross_entropy(fake_logits, target_labels)  # Original loss for digit classification
+        # Generator loss for real/fake head: maximize probability of being real
+        # Use binary cross-entropy: target is 1 (real)
+        real_targets = torch.ones(fake_rf_logits.size(0), 1, dtype=torch.float32, device=self.device)
+        adversarial_loss = F.binary_cross_entropy_with_logits(fake_rf_logits, real_targets)
         
-        # Add adversarial loss: generator wants discriminator to think fake images are real
-        # We want the "fake" probability (class 10) to be low
-        fake_prob = F.softmax(fake_logits, dim=1)[:, 10]  # Probability of being fake
-        adversarial_loss = fake_prob.mean()  # Minimize probability of being fake
+        # Generator loss for digit class head: maximize probability of target class
+        target_class_loss = F.cross_entropy(fake_digit_logits, target_labels)
         
-        total_loss = gan_loss + self.args.adversarial_weight * adversarial_loss
+        # Combine losses based on adversarial_weight
+        # adversarial_weight controls balance between real/fake and digit classification
+        gan_loss = (1 - self.args.adversarial_weight) * adversarial_loss + self.args.adversarial_weight * target_class_loss
+        
+        total_loss = gan_loss
         
         # Feature matching loss if enabled
         if self.args.use_feature_matching:
@@ -718,7 +739,7 @@ class MNISTActionGAN:
         return recon_images.to(self.device)
     
     def _compute_gradient_penalty(self, real_images, fake_images):
-        """Compute gradient penalty for WGAN-GP."""
+        """Compute gradient penalty for WGAN-GP (using real/fake head)."""
         batch_size = real_images.size(0)
         alpha = torch.rand(batch_size, 1, 1, 1, device=self.device)
         
@@ -726,14 +747,14 @@ class MNISTActionGAN:
         interpolated = alpha * real_images + (1 - alpha) * fake_images
         interpolated.requires_grad_(True)
         
-        # Get discriminator output for interpolated images
-        d_interpolated = self.discriminator(interpolated)
+        # Get discriminator output for interpolated images (AC-GAN: two heads)
+        d_rf_interpolated, _ = self.discriminator(interpolated)
         
-        # Compute gradients
+        # Compute gradients with respect to real/fake head
         gradients = torch.autograd.grad(
-            outputs=d_interpolated,
+            outputs=d_rf_interpolated,
             inputs=interpolated,
-            grad_outputs=torch.ones_like(d_interpolated),
+            grad_outputs=torch.ones_like(d_rf_interpolated),
             create_graph=True,
             retain_graph=True
         )[0]
@@ -1498,9 +1519,9 @@ def main():
     parser = argparse.ArgumentParser(description='Train MNIST Action GAN')
     
     # Dataset parameters
-    parser.add_argument('--N', type=int, default=20, 
+    parser.add_argument('--N', type=int, default=200, 
                        help='Number of samples per digit class (default: 10)')
-    parser.add_argument('--A', type=int, default=5, 
+    parser.add_argument('--A', type=int, default=9, 
                        help='Action range [-A, A] (default: 2)')
     parser.add_argument('--cyclic', type=bool, default=False, 
                        help='Use cyclic addition mod 10 (default: False)')
@@ -1510,7 +1531,7 @@ def main():
     # Model parameters
     parser.add_argument('--latent_dim', type=int, default=64, 
                        help='Latent dimension (default: 64)')
-    parser.add_argument('--batch_size', type=int, default=64, 
+    parser.add_argument('--batch_size', type=int, default=256, 
                        help='Batch size (default: 64)')
     
     # Training parameters
