@@ -8,9 +8,92 @@ from sklearn.decomposition import PCA
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import r2_score
 from numpy.polynomial.chebyshev import chebvander
+from itertools import product
+
+import math
+from typing import Any, Dict, Iterable, List, Tuple
+
+import numpy as np
 
 # Set random seeds for reproducibility
 torch.manual_seed(42)
+
+
+def FW_transform(x, y):
+    n=x.shape[1]
+    f_hat = np.zeros(2**n)
+    basis_bits_l = [
+    [i for i, bit in enumerate(mask) if bit]
+    for mask in product([0, 1], repeat=n)
+    ]
+
+    for i, S in enumerate(basis_bits_l):
+        xi_i = np.prod(x[:, S], axis=1)
+        f_hat[i] = np.mean(xi_i*y)
+    return f_hat
+
+def calc_degree(f_hat):
+    n = int(np.log2(len(f_hat)))
+    basis_bits_l = [
+    [i for i, bit in enumerate(mask) if bit]
+    for mask in product([0, 1], repeat=n)
+    ]
+    non_zero = f_hat!=0
+    if np.sum(non_zero) == 0:
+        return 0
+    degree = max([len(basis_bits_l[i]) for i in np.where(non_zero)[0]])
+    return degree
+
+def array_to_binary(x: Iterable[Any]) -> Tuple[np.ndarray, Dict[Any, str]]:
+    """
+    Convert a 1D array-like x into a 2D binary code matrix using the minimal
+    number of bits needed to represent all unique values.
+
+    Steps:
+      1) Find unique values in x (preserving first-appearance order)
+      2) Assign each unique value an integer id 0..k-1
+      3) Use b = ceil(log2(k)) bits (minimal), with a special case k<=1 -> b=1
+      4) Return:
+           - codes: shape (len(x), b) with 0/1 ints
+           - mapping: dict {value: bitstring}
+
+    Example:
+      x = ["cat","dog","cat","bird"]
+      k=3 -> b=2
+      mapping might be {"cat":"00","dog":"01","bird":"10"}
+      codes -> [[0,0],[0,1],[0,0],[1,0]]
+    """
+    x_list = list(x)
+    n = len(x_list)
+
+    # Unique values in order of first appearance
+    mapping_id: Dict[Any, int] = {}
+    uniques: List[Any] = []
+    for v in x_list:
+        if v not in mapping_id:
+            mapping_id[v] = len(uniques)
+            uniques.append(v)
+
+    k = len(uniques)
+    bits = 1 if k <= 1 else int(math.ceil(math.log2(k)))
+
+    # Integer ids for each x value
+    ids = np.fromiter((mapping_id[v] for v in x_list), dtype=np.int64, count=n)
+
+    # Convert ids -> bit matrix (MSB first)
+    # Example bits=3: id=5 (101) => [1,0,1]
+    shifts = np.arange(bits - 1, -1, -1, dtype=np.int64)
+    codes = ((ids[:, None] >> shifts[None, :]) & 1).astype(float)
+
+    return codes
+
+def data_to_binary(data):
+    binary_data = []
+    for dim in range(data.shape[1]):
+        binary_data.append(array_to_binary(data[:,dim]))
+
+    return np.concatenate(binary_data, axis=1)
+
 
 # Set device (GPU if available, else CPU)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -22,15 +105,15 @@ else:
     print("Using CPU")
 
 # Parameters
-ds = 0.1
+ds = 0.2
 S = 1.0  # Range for s: [-S, S]
 ds_plot = ds / 100  # Interval for plotting
-predictor_layers = [100]*5
+predictor_layers = [500]*5
 
 # Values of A to test
 A_values = [ds, S/2, S]
-output_dims = [10] # np.linspace(5, 20, 2).astype(int)
-input_dim = 10
+output_dims = [20] # np.linspace(5, 20, 2).astype(int)
+input_dim = 3
 lr = 0.00001
 n_epochs = 10000
 optimizer_fn = torch.optim.Adam
@@ -38,7 +121,7 @@ optimizer_fn = torch.optim.Adam
 def poly(x):
     return x**4 + x**2
 
-def generate_twisted_polynomial_vector(x, input_dim=100, min_deg=15, max_deg=30):
+def generate_twisted_polynomial_vector(x, input_dim=100, min_deg=5, max_deg=10):
     """
     Generates a high-dimensional vector based on x using high-degree polynomials.
     
@@ -189,7 +272,7 @@ def train_model(A, S, ds, vin, vout, num_epochs=10, batch_size=64, learning_rate
     # Create model and move to device
     model = DeepFCN(input_dim=X.shape[1], hidden_dims=predictor_layers, output_dim=y.shape[1]).to(device)
     criterion = nn.MSELoss()
-    optimizer = optimizer_fn(model.parameters(), lr=learning_rate, weight_decay=1e-3)
+    optimizer = optimizer_fn(model.parameters(), lr=learning_rate)
     
     # Track training loss
     train_losses = []
@@ -209,7 +292,7 @@ def train_model(A, S, ds, vin, vout, num_epochs=10, batch_size=64, learning_rate
         # Store loss for this epoch
         train_losses.append(loss.item())
     
-    return model, s_vals, a_vals, targets, train_losses
+    return model, s_vals, a_vals, inputs, targets, train_losses
 
 def train_hidden_to_target_model(original_model, X, y, vin, vout, hidden_dim=1000, num_epochs=10000, batch_size=256, learning_rate=0.001):
     """Train a single hidden layer model to map hidden activations to targets."""
@@ -296,12 +379,12 @@ def plot_all_results(all_results, S, ds_plot, vin, vout):
         axes = axes.reshape(1, -1)
     
     # Generate plot data once (same for all A values)
-    inputs_plot, targets_plot, s_vals_plot, a_vals_plot = generate_training_data(1e-10, S, ds/100, vin, vout)
+    inputs_plot, targets_plot, s_vals_plot, a_vals_plot = generate_training_data(ds*3, S, ds/100, vin, vout)
     
     # Compute color values: s_vals_plot + a_vals_plot
     color_values = s_vals_plot + a_vals_plot
     
-    for idx, (A, model, s_train, a_train, targets_train, train_losses, hidden_train_losses, hidden_test_losses) in enumerate(all_results):
+    for idx, (A, model, s_train, a_train, inputs_train, targets_train, train_losses, hidden_train_losses, hidden_test_losses) in enumerate(all_results):
         # Get predictions from model
         model.eval()
         with torch.no_grad():
@@ -310,6 +393,18 @@ def plot_all_results(all_results, S, ds_plot, vin, vout):
             predictions = predictions.cpu().numpy()
             hidden = hidden.cpu().numpy()
         
+        inputs_binary = data_to_binary(inputs_train)
+        latent_binary = data_to_binary((s_train+a_train)[:,None])
+        if inputs_binary.shape[1] > 20:
+            degree = 0
+            degree_latent = 0
+        else:
+            f_hat_l = [FW_transform(inputs_binary, targets_train[:,i]) for i in range(targets_train.shape[1])]
+            degree_l = [calc_degree(f_hat) for f_hat in f_hat_l]
+            degree = np.mean(degree_l)
+            f_hat_l = [FW_transform(latent_binary, targets_train[:,i]) for i in range(targets_train.shape[1])]
+            degree_l = [calc_degree(f_hat) for f_hat in f_hat_l]
+            degree_latent = np.mean(degree_l)
         # Calculate MSE
         mse = np.mean((predictions - targets_plot)**2)
         
@@ -326,9 +421,8 @@ def plot_all_results(all_results, S, ds_plot, vin, vout):
         ax_pred.scatter(s_train_a0, targets_train_a0, c='green', s=30, alpha=0.6, 
                         label='Training samples (a=0)', zorder=5)
         ax_pred.set_xlabel('x', fontsize=6)
-        ax_pred.set_ylabel('Output', fontsize=6)
+        ax_pred.set_ylabel(f'degree={degree}/{inputs_binary.shape[1]}, latent_degree={degree_latent}/{latent_binary.shape[1]}', fontsize=6)
         ax_pred.set_title(f'A={A:.3f}, MSE={mse:.6f}', fontsize=7)
-        ax_pred.legend(fontsize=5.5)
         ax_pred.grid(True, alpha=0.3)
         
         # Left subplot: Function predictions
@@ -357,55 +451,99 @@ def plot_all_results(all_results, S, ds_plot, vin, vout):
         ax_loss.set_yscale('log')  # Use log scale for better visualization
         
         # Third subplot: PCA of hidden activities
+        # Compute color values: s_vals_plot
+        color_values = s_vals_plot
         ax_i += 1
         ax_pca_hidden = axes[idx, ax_i]
         pca_hidden = PCA(n_components=2)
         hidden_pca = pca_hidden.fit_transform(hidden)
         # Calculate R² between PCs and s+a
         reg_hidden = LinearRegression()
-        reg_hidden.fit(hidden_pca[:,[0]], color_values)
-        r2_hidden = r2_score(color_values, reg_hidden.predict(hidden_pca[:,[0]]))
+        reg_hidden.fit(hidden_pca[:,:3], color_values)
+        r2_hidden = r2_score(color_values, reg_hidden.predict(hidden_pca[:,:3]))
         scatter_hidden = ax_pca_hidden.scatter(hidden_pca[:, 0], hidden_pca[:, 1], 
                                                 c=color_values, cmap='viridis', 
                                                 s=10, alpha=0.6)
         ax_pca_hidden.set_xlabel(f'PC1 ({pca_hidden.explained_variance_ratio_[0]:.2%} variance)', fontsize=6)
         ax_pca_hidden.set_ylabel(f'PC2 ({pca_hidden.explained_variance_ratio_[1]:.2%} variance)', fontsize=6)
-        ax_pca_hidden.set_title(f'R²={r2_hidden:.3f}', fontsize=7)
+        ax_pca_hidden.set_title(f'colored by s: R²={r2_hidden:.3f}', fontsize=7)
         ax_pca_hidden.axis('equal')
         plt.colorbar(scatter_hidden, ax=ax_pca_hidden, label='s+a')
         ax_pca_hidden.grid(True, alpha=0.3)
         
-        # Fourth subplot: PCA of targets
+        # Third subplot: PCA of hidden activities colored by actions
+        # Compute color values: a_vals_plot
+        color_values = a_vals_plot
         ax_i += 1
-        ax_pca_targets = axes[idx, ax_i]
-        pca_targets = PCA(n_components=2)
-        targets_pca = pca_targets.fit_transform(targets_plot)
+        ax_pca_hidden = axes[idx, ax_i]
+        pca_hidden = PCA(n_components=2)
+        hidden_pca = pca_hidden.fit_transform(hidden)
         # Calculate R² between PCs and s+a
-        reg_targets = LinearRegression()
-        reg_targets.fit(targets_pca, color_values)
-        r2_targets = r2_score(color_values, reg_targets.predict(targets_pca))
-        scatter_targets = ax_pca_targets.scatter(targets_pca[:, 0], targets_pca[:, 1], 
-                                                  c=color_values, cmap='viridis', 
-                                                  s=10, alpha=0.6)
-        ax_pca_targets.set_xlabel(f'PC1 ({pca_targets.explained_variance_ratio_[0]:.2%} variance)', fontsize=6)
-        ax_pca_targets.set_ylabel(f'PC2 ({pca_targets.explained_variance_ratio_[1]:.2%} variance)', fontsize=6)
-        ax_pca_targets.set_title(f'PCA of Targets (A={A:.3f}, R²={r2_targets:.3f})', fontsize=7)
-        plt.colorbar(scatter_targets, ax=ax_pca_targets, label='s+a')
-        ax_pca_targets.grid(True, alpha=0.3)
+        reg_hidden = LinearRegression()
+        reg_hidden.fit(hidden_pca[:,:3], color_values)
+        r2_hidden = r2_score(color_values, reg_hidden.predict(hidden_pca[:,:3]))
+        scatter_hidden = ax_pca_hidden.scatter(hidden_pca[:, 0], hidden_pca[:, 1], 
+                                                c=color_values, cmap='viridis', 
+                                                s=10, alpha=0.6)
+        ax_pca_hidden.set_xlabel(f'PC1 ({pca_hidden.explained_variance_ratio_[0]:.2%} variance)', fontsize=6)
+        ax_pca_hidden.set_ylabel(f'PC2 ({pca_hidden.explained_variance_ratio_[1]:.2%} variance)', fontsize=6)
+        ax_pca_hidden.set_title(f'colored by a: R²={r2_hidden:.3f}', fontsize=7)
+        ax_pca_hidden.axis('equal')
+        plt.colorbar(scatter_hidden, ax=ax_pca_hidden, label='s+a')
+        ax_pca_hidden.grid(True, alpha=0.3)
         
-        # Fifth subplot: Hidden-to-target training loss curve
+        # Third subplot: PCA of hidden activities colored by s+a
+        # Compute color values: a_vals_plot + s_vals_plot
+        color_values = s_vals_plot + a_vals_plot
         ax_i += 1
-        ax_hidden_loss = axes[idx, ax_i]
-        hidden_epochs = np.arange(1, len(hidden_train_losses) + 1)
-        hidden_epochs_test = np.linspace(1, len(hidden_train_losses), len(hidden_test_losses))
-        ax_hidden_loss.plot(hidden_epochs, hidden_train_losses, 'c-', label='Training')
-        ax_hidden_loss.plot(hidden_epochs_test, hidden_test_losses, 'c--', label='Test')
-        ax_hidden_loss.legend(fontsize=5.5)
-        ax_hidden_loss.set_xlabel('Epoch', fontsize=6)
-        ax_hidden_loss.set_ylabel('Hidden-to-Target Loss (MSE)', fontsize=6)
-        ax_hidden_loss.set_title(f'Hidden-to-Target Loss (A={A:.3f})', fontsize=7)
-        ax_hidden_loss.grid(True, alpha=0.3)
-        ax_hidden_loss.set_yscale('log')  # Use log scale for better visualization
+        ax_pca_hidden = axes[idx, ax_i]
+        pca_hidden = PCA(n_components=2)
+        hidden_pca = pca_hidden.fit_transform(hidden)
+        # Calculate R² between PCs and s+a
+        reg_hidden = LinearRegression()
+        reg_hidden.fit(hidden_pca[:,:3], color_values)
+        r2_hidden = r2_score(color_values, reg_hidden.predict(hidden_pca[:,:3]))
+        scatter_hidden = ax_pca_hidden.scatter(hidden_pca[:, 0], hidden_pca[:, 1], 
+                                                c=color_values, cmap='viridis', 
+                                                s=10, alpha=0.6)
+        ax_pca_hidden.set_xlabel(f'PC1 ({pca_hidden.explained_variance_ratio_[0]:.2%} variance)', fontsize=6)
+        ax_pca_hidden.set_ylabel(f'PC2 ({pca_hidden.explained_variance_ratio_[1]:.2%} variance)', fontsize=6)
+        ax_pca_hidden.set_title(f'colored by s+a: R²={r2_hidden:.3f}', fontsize=7)
+        ax_pca_hidden.axis('equal')
+        plt.colorbar(scatter_hidden, ax=ax_pca_hidden, label='s+a')
+        ax_pca_hidden.grid(True, alpha=0.3)
+        
+        # # Fourth subplot: PCA of targets
+        # ax_i += 1
+        # ax_pca_targets = axes[idx, ax_i]
+        # pca_targets = PCA(n_components=2)
+        # targets_pca = pca_targets.fit_transform(targets_plot)
+        # # Calculate R² between PCs and s+a
+        # reg_targets = LinearRegression()
+        # reg_targets.fit(targets_pca, color_values)
+        # r2_targets = r2_score(color_values, reg_targets.predict(targets_pca))
+        # scatter_targets = ax_pca_targets.scatter(targets_pca[:, 0], targets_pca[:, 1], 
+        #                                           c=color_values, cmap='viridis', 
+        #                                           s=10, alpha=0.6)
+        # ax_pca_targets.set_xlabel(f'PC1 ({pca_targets.explained_variance_ratio_[0]:.2%} variance)', fontsize=6)
+        # ax_pca_targets.set_ylabel(f'PC2 ({pca_targets.explained_variance_ratio_[1]:.2%} variance)', fontsize=6)
+        # ax_pca_targets.set_title(f'PCA of Targets (A={A:.3f}, R²={r2_targets:.3f})', fontsize=7)
+        # plt.colorbar(scatter_targets, ax=ax_pca_targets, label='s+a')
+        # ax_pca_targets.grid(True, alpha=0.3)
+        
+        # # Fifth subplot: Hidden-to-target training loss curve
+        # ax_i += 1
+        # ax_hidden_loss = axes[idx, ax_i]
+        # hidden_epochs = np.arange(1, len(hidden_train_losses) + 1)
+        # hidden_epochs_test = np.linspace(1, len(hidden_train_losses), len(hidden_test_losses))
+        # ax_hidden_loss.plot(hidden_epochs, hidden_train_losses, 'c-', label='Training')
+        # ax_hidden_loss.plot(hidden_epochs_test, hidden_test_losses, 'c--', label='Test')
+        # ax_hidden_loss.legend(fontsize=5.5)
+        # ax_hidden_loss.set_xlabel('Epoch', fontsize=6)
+        # ax_hidden_loss.set_ylabel('Hidden-to-Target Loss (MSE)', fontsize=6)
+        # ax_hidden_loss.set_title(f'Hidden-to-Target Loss (A={A:.3f})', fontsize=7)
+        # ax_hidden_loss.grid(True, alpha=0.3)
+        # ax_hidden_loss.set_yscale('log')  # Use log scale for better visualization
         
         # Print error statistics
         mae = np.mean(np.abs(predictions - targets_plot))
@@ -444,7 +582,7 @@ def plot_pca_grid(all_results_2d, S, ds, vin, vout):
         # Compute color values: s_vals_plot + a_vals_plot
         color_values = s_vals_plot + a_vals_plot
         
-        for col_idx, (A, model, s_train, a_train, targets_train, train_losses, hidden_train_losses, hidden_test_losses) in enumerate(all_results):
+        for col_idx, (A, model, s_train, a_train, inputs_train, targets_train, train_losses, hidden_train_losses, hidden_test_losses) in enumerate(all_results):
             # Get hidden activations from model
             model.eval()
             with torch.no_grad():
@@ -502,7 +640,7 @@ if __name__ == "__main__":
             vout = np.random.randn(output_dim)[None,:]
             
             # Train model
-            model, s_train, a_train, targets_train, train_losses = train_model(A, S, ds, vin, vout, num_epochs=n_epochs, learning_rate=lr)
+            model, s_train, a_train, inputs_train, targets_train, train_losses = train_model(A, S, ds, vin, vout, num_epochs=n_epochs, learning_rate=lr)
             
             # Prepare data for hidden-to-target model training
             inputs, targets, s_vals, a_vals = generate_training_data(A, S, ds, vin, vout)
@@ -518,7 +656,7 @@ if __name__ == "__main__":
             )
             
             # Store results
-            all_results.append((A, model, s_train, a_train, targets_train, train_losses, hidden_train_losses, hidden_test_losses))
+            all_results.append((A, model, s_train, a_train, inputs_train, targets_train, train_losses, hidden_train_losses, hidden_test_losses))
             
             print(f"Completed processing for A = {A}\n")
         
