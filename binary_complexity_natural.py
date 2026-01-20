@@ -1,6 +1,7 @@
 import numpy as np
 from sklearn.linear_model import LinearRegression
 from itertools import combinations
+import matplotlib.pyplot as plt
 from numpy.polynomial.chebyshev import chebvander
 
 
@@ -36,115 +37,28 @@ def generate_twisted_polynomial_vector(x, input_dim=100, min_deg=5, max_deg=10):
     high_dim_vector = high_freq_polys @ W
     
     return high_dim_vector
-# --- 1. Setup Data & Latents (2 Dimensions) ---
-# We create a grid of (s, a) values to define the manifold
-# s in [-1, 1], a in [-0.1, 0.1]
-s_bits = 4
-a_bits = 4
-s_values = np.linspace(-1, 1, 2**s_bits)       # 4 values
-a_values = np.linspace(-1, 1, 2**a_bits)   # 4 values
 
-# Create the cartesian product (grid) of s and a
-# This gives us 16 distinct latent states (4x4)
-Z_grid = np.array(np.meshgrid(s_values, a_values)).T.reshape(-1, 2)
-s = Z_grid[:, [0]]
-a = Z_grid[:, [1]]
+s_bits = 10
+s_in = np.eye(s_bits)*2 - 1
 
-N_SAMPLES = len(s) # 16
+N_SAMPLES = s_bits
 
-# Generator phi(z) = [s^2, s^3, a^2, a^3]
-# Note: X has 4 continuous dimensions
-latent_continuous = np.concatenate([s, a], axis=1)
-proj = np.random.randn(1,5)+1
-# x_continuous = np.concatenate([(s@proj), (a@proj)], axis=1)
-x_continuous = np.concatenate([generate_twisted_polynomial_vector(s.squeeze(), input_dim=5),
-                               generate_twisted_polynomial_vector(a.squeeze(), input_dim=5)  ], axis=1)
+# y_task = np.arange(s_bits)
+y_task = generate_twisted_polynomial_vector(np.arange(s_bits), input_dim=1).squeeze()
 
+obs_size = 40
+obs_string = np.random.choice([-1, 1], size=obs_size+s_bits)
 
-identical_inputs_inds = np.where((abs(x_continuous[None,:, :] - x_continuous[:, None, :]).sum(-1)) < 1e-9)
-for i, j in zip(identical_inputs_inds[0], identical_inputs_inds[1]):
-    if i != j:
-        print(f"Identical input at {i}, {j}: {x_continuous[i]} == {x_continuous[j]}, where s={s[i]} and a={a[i]} == s={s[j]} and a={a[j]}")
-# Task h(z) = (s + a)^3 + (s + a)^2
-y_task = (s + a)**3 + (s + a)**2
+print('Observed string: ')
+print(obs_string)
 
-print(f"--- Data Stats ---")
-print(f"Latent Samples: {N_SAMPLES}")
-print(f"Latent s range: [{s.min()}, {s.max()}]")
-print(f"Latent a range: [{a.min()}, {a.max()}]")
-print(f"X shape: {x_continuous.shape}")
+latent_bool = s_in
+X_bool = np.array([obs_string[i:i+obs_size] for i in range(s_bits)])
 
-def check_binary_encoding(X_vals, X_bool):
-    bits_mat = np.array(X_bool)
-    bits_dist = abs(bits_mat[None, :, :] - bits_mat[:, None, :]).sum(-1)
-    val_dist = abs(X_vals[None, :] - X_vals[:, None])
-    mismatch = np.where(((bits_dist == 0) & (val_dist > 0)) | ((bits_dist > 0) & (val_dist == 0)))
-    for i, j in zip(mismatch[0], mismatch[1]):
-        print(f"Mismatch at {i}, {j}: {X_vals[i]} == {X_vals[j]}")
-    return mismatch
-    
-
-# --- 2. Robust Boolean Encoding ---
-# We need to encode 4 continuous features into bits.
-# Crucial: We must normalize EACH column independently because 
-# a^2 (approx 0.01) is much smaller than s^2 (approx 1.0).
-
-BITS_PER_FEATURE = 10 # Total bits m = 4 features * 5 bits = 20 bits
-
-def quantize_matrix(X, n_bits):
-    """Quantizes each column of X to n_bits independently."""
-    n_rows, n_cols = X.shape
-    X_bool_list = []
-    
-    for col_idx in range(n_cols):
-        col_vals = X[:, col_idx]
-        col_vals = np.round(col_vals, 6)
-        min_v, max_v = col_vals.min(), col_vals.max()
-        
-        # Avoid division by zero if a feature is constant
-        if max_v == min_v:
-            max_v += 1e-9
-            
-        # Normalize to 0..1
-        norm = (col_vals - min_v) / (max_v - min_v)
-        
-        # Scale to integer levels
-        levels = 2**n_bits
-        ints = np.floor(norm * levels).astype(int)
-        ints = np.clip(ints, 0, levels - 1)
-        
-        # Convert integers to bit vectors [-1, 1]
-        col_bits = []
-        for val in ints:
-            bits = [1 if (val >> b) & 1 else -1 for b in range(n_bits)]
-            col_bits.append(bits)
-        check_binary_encoding(col_vals, col_bits)
-        X_bool_list.append(col_bits)
-        
-    # Concatenate all feature bits horizontally
-    # Shape: (N_SAMPLES, n_cols * n_bits)
-    X_bool = np.hstack(X_bool_list)
-    return X_bool
-
-s_bool = quantize_matrix(s, s_bits)
-a_bool = quantize_matrix(a, a_bits)
-latent_bool = np.concatenate([s_bool, a_bool], axis=1)
-X_bool = quantize_matrix(x_continuous, BITS_PER_FEATURE)
-
-for data_bool, data_cont, tag in zip([latent_bool, X_bool], [latent_continuous, x_continuous], ['latent', 'observations']):
+for data_bool, tag in zip([latent_bool, X_bool], ['latent', 'observations']):
     print(f'\n--------------- {tag} ---------------')
     print(f'X bool shape: {data_bool.shape}')
     m = data_bool.shape[1]
-
-    # Check for collisions
-    unique_rows = np.unique(data_bool, axis=0)
-    unique_samples = np.unique(data_cont, axis=0)
-    if len(unique_rows) < len(unique_samples):
-        print(f"\n[ERROR] Collision! {len(unique_rows)} unique bool vs {len(unique_samples)} unique samples.")
-        exit()
-    else:
-        print(f"\n[OK] Encoding clean. Input Dimension m = {m} bits")
-
 
     # --- 3. Iterative Search for h* ---
     # We look for the lowest degree polynomial that solves the task.
