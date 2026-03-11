@@ -5,6 +5,25 @@ from scipy.ndimage import gaussian_filter
 from sklearn.datasets import fetch_openml
 
 
+
+def random_vectors(d: int, n: int) -> np.ndarray:
+    """
+    Returns an (n, d) matrix of random vectors.
+
+    - If n <= d: returns n orthonormal vectors in R^d.
+    - If n > d: returns n independent Gaussian random vectors in R^d.
+    """
+    if n <= d:
+        # Generate random Gaussian matrix
+        A = np.random.randn(d, n)
+        # QR decomposition
+        Q, _ = np.linalg.qr(A)
+        # Return orthonormal vectors as rows
+        return Q.T  # shape (n, d)
+    else:
+        # More vectors than dimension → cannot be mutually orthogonal
+        return np.random.randn(n, d)
+
 def one_hot(x, num_classes):
     return np.eye(num_classes)[x]
 
@@ -207,7 +226,9 @@ def create_data_euclidean(C):
         vecs_out = np.eye(output_size).reshape([n_cors] + [cor_len]*cor_dim + [output_size])
     else:
         output_size = C.output_size
-        vecs_out = np.random.normal(size=[n_cors] + [cor_len]*cor_dim + [output_size])
+        n_vectors = np.prod([n_cors] + [cor_len]*cor_dim)
+        vecs_out = random_vectors(output_size, n_vectors)
+        vecs_out = vecs_out.reshape([n_cors] + [cor_len]*cor_dim + [output_size])
     positions = list(itertools.product(*[np.arange(cor_len)]*cor_dim))
     X = []
     y = []
