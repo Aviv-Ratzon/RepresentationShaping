@@ -102,8 +102,9 @@ r_2_ols_l = []
 mse_l = []
 mse_ols_l = []
 matrix_sim_l = []
-S = 100
-A_l = np.arange(1, S-1)
+gap_l = []
+S = 101
+A_l = np.arange(1, S)
 for A in tqdm(A_l):
     # S = 100
     A = A
@@ -157,6 +158,8 @@ for A in tqdm(A_l):
     r_2_ols_l.append(get_r_2(hidden_OLS[:,:2], loc_y))
 
     matrix_sim_l.append(np.linalg.norm(M-OLS, ord=2)/np.linalg.norm(OLS, ord='fro'))
+    
+    gap_l.append(L[0] - L[1])
 
     if A==1 or A==S//2 or A==S-1:
         fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
@@ -198,8 +201,8 @@ ax3.plot(A_l, mse_ols_l, c='tab:blue', ls='--')
 ax3.set_ylabel('MSE')
 ax3.set_yscale('log')
 ax3.set_xlabel('A')
-ax4.plot(A_l, matrix_sim_l, c='tab:green')
-ax4.set_ylabel('matrix distance')
+ax4.plot(A_l, gap_l, c='tab:green')
+ax4.set_ylabel('gap')
 ax4.set_xlabel('A')
 plt.tight_layout()
 plt.show()

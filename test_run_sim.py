@@ -25,6 +25,7 @@ C.scalar_actions = False
 C.cyclic_corridors = False
 C.one_hot_inputs = False
 C.one_hot_outputs = False
+C.omit_indices = [10]
 C.input_size = 15
 C.output_size = 10
 

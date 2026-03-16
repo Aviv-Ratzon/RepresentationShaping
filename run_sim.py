@@ -89,6 +89,7 @@ class Config:
         self.mask_states = None
         self.data_geometry = 'euclidean'  # Options: 'euclidean', 'hyperbolic'
         self.cyclic_corridors = False
+        self.omit_indices = []
 
         # Model
         self.sig_h_2 = None
@@ -130,6 +131,7 @@ def train_model(C: Config, X, y, model, action_taken):
     algo = optim.SGD if C.algo_name == 'SGD' else optim.Adam
     optimizer = algo(model.parameters(), lr=C.learning_rate, weight_decay=C.lambda_reg)
     loss_thresh = 0.05 if not C.one_hot_inputs else 0.01
+    omit_inds = C.omit_indices
 
     # Enable higher precision training if configured
     if C.use_high_precision:
@@ -137,11 +139,17 @@ def train_model(C: Config, X, y, model, action_taken):
         X = X.double()
         y = y.double()
     
+    X_test = X[omit_inds]
+    y_test = y[omit_inds]
+    X_train = np.delete(X, omit_inds, axis=0)
+    y_train = np.delete(y, omit_inds, axis=0)
     
     y_var = y.var().cpu().item() if isinstance(criterion, nn.MSELoss) else 1
     # Training loop
     loss_l = []
     accuracy_l = []
+    loss_test_l = []
+    accuracy_test_l = []
     hidden_l = []
     state_dict_l = []
     PR_l = []
@@ -150,17 +158,17 @@ def train_model(C: Config, X, y, model, action_taken):
     sample_inds_PR = np.unique(np.linspace(0, C.num_epochs-1, 100).astype(int))
     for epoch in tqdm(range(C.num_epochs)) if C.print_progress else range(C.num_epochs):
         if C.B == 1:
-            X_batch = X
-            y_batch = y
+            X_batch = X_train
+            y_batch = y_train
         else:
             if C.bias_batch:
                 p = (C.max_move - abs(action_taken) + 1)**C.bias_batch
                 p = p / p.sum()
             else:
                 p = None
-            batch_inds = np.random.choice(X.shape[0], size=int(C.B*X.shape[0]), replace=True, p=p)
-            X_batch = X[batch_inds]
-            y_batch = y[batch_inds]
+            batch_inds = np.random.choice(X_train.shape[0], size=int(C.B*X_train.shape[0]), replace=True, p=p)
+            X_batch = X_train[batch_inds]
+            y_batch = y_train[batch_inds]
         optimizer.zero_grad()
         outputs, hidden_states = model(X_batch)
         if not isinstance(criterion, nn.CrossEntropyLoss):
@@ -197,6 +205,18 @@ def train_model(C: Config, X, y, model, action_taken):
                         break
                 else:
                     accuracy_l.append(0)
+                
+                if len(omit_inds) > 0:
+                    outputs, hidden_states = model(X_test)
+                    loss_test = criterion(outputs, y_test)
+                    loss_test_l.append(loss_test.item()/y_var)
+                    if C.one_hot_inputs:
+                        accuracy_test_l.append((outputs.argmax(dim=1) == y_test.argmax(dim=1)).float().mean().item())
+                        if (accuracy_test_l[-1] == 1 or loss_test_l[-1] < loss_thresh) and C.early_stopping:
+                            # print('perfect accuracy reached, stopping')
+                            break
+                    else:
+                        accuracy_test_l.append(0)
             
             if epoch in sample_inds_PR:
                 outputs, hidden_states = model(X)
@@ -209,7 +229,7 @@ def train_model(C: Config, X, y, model, action_taken):
         #     state_dict_l.append(deepcopy(model.state_dict()))
     
     model.float()
-    return loss_l, accuracy_l, hidden_l, state_dict_l, PR_l
+    return loss_l, accuracy_l, hidden_l, state_dict_l, PR_l, loss_test_l, accuracy_test_l
 
 
 def run_sim(C: Config):
@@ -232,19 +252,19 @@ def run_sim(C: Config):
         model.load_state_dict(torch.load(C.state_dict_path))
     initial_weights = deepcopy(model.state_dict())
 
-    loss_l, accuracy_l, hidden_l, state_dict_l, PR_l = train_model(C, X, y, model, action_taken)
+    loss_l, accuracy_l, hidden_l, state_dict_l, PR_l, loss_test_l, accuracy_test_l = train_model(C, X, y, model, action_taken)
     # Testing
     with torch.no_grad():
         outputs, hidden_states = model(X)
     # print(criterion(outputs, y).item()/y_var)
 
 
-    return X, y, corridor, loc_X.squeeze(), loc_y.squeeze(), action_taken, hidden_states, loss_l, accuracy_l, outputs.cpu().numpy(), hidden_l, model.state_dict(), initial_weights, state_dict_l, PR_l
+    return X, y, corridor, loc_X.squeeze(), loc_y.squeeze(), action_taken, hidden_states, loss_l, accuracy_l, outputs.cpu().numpy(), hidden_l, model.state_dict(), initial_weights, state_dict_l, PR_l, loss_test_l, accuracy_test_l
 
 
 
 def run_sim_wrapper(C):
-    X, y, corridor, loc_X, loc_y, action_taken, hidden_states, loss_l, accuracy_l, outputs, hidden_l, final_weights, initial_weights, state_dict_l, PR_l = run_sim(C)
+    X, y, corridor, loc_X, loc_y, action_taken, hidden_states, loss_l, accuracy_l, outputs, hidden_l, final_weights, initial_weights, state_dict_l, PR_l, loss_test_l, accuracy_test_l = run_sim(C)
 
     data_dict = {
         'X': X,
@@ -262,7 +282,9 @@ def run_sim_wrapper(C):
         'final_weights': final_weights,
         'C': C,
         'state_dict_l': state_dict_l,
-        'PR_l': PR_l
+        'PR_l': PR_l,
+        'loss_test_l': loss_test_l,
+        'accuracy_test_l': accuracy_test_l
     }
 
     return data_dict
