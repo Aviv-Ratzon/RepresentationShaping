@@ -1,7 +1,21 @@
+from copy import deepcopy
+import itertools
+import numpy as np
+import torch
+from scipy.ndimage import gaussian_filter
+from scipy.spatial import distance_matrix
+from torch import nn, optim
 
+import pickle as pkl
+from tqdm import tqdm
+import matplotlib.pyplot as plt
+
+from utils import get_r_2, calc_PR
 from sklearn.decomposition import PCA
 from torch import nn
 from umap import UMAP
+import numpy as np
+import torch
 
 
 np.random.seed(0)
@@ -78,22 +92,9 @@ class LinearRNN(nn.Module):
         return outputs, hidden_states
 
 
-from copy import deepcopy
-import itertools
-import numpy as np
-import torch
-from scipy.ndimage import gaussian_filter
-from scipy.spatial import distance_matrix
-from torch import nn, optim
-
-from utils import one_hot
-from tqdm import tqdm
-import matplotlib.pyplot as plt
-
-from utils import get_r_2, calc_PR
-
-
 use_gpu = True
+def one_hot(i, n):
+    return np.eye(n)[i]
 
 
 class Config:
@@ -133,12 +134,13 @@ C.G = 0.8
 C.sig_h_2 = 1e-8
 C.linear_net = True
 C.split_actions = False
-C.learning_rate = 0.0001
-C.L=1
+C.learning_rate = 0.0005
+C.L=3
 C.print_progress = True
 C.length_corridors = [20]*1
 C.max_move = 1
 C.hidden_size = 40
+C.gpu_id = 4
 C.num_epochs = 100000
 C.algo_name = 'Adam'
 C.fixed_output = False
@@ -148,6 +150,7 @@ C.bias = False
 order_k_l = []
 pr_k_l = []
 accuracy_k_l = []
+W_list_l = []
 k_l = np.arange(1, 21)
 for k in tqdm(k_l):
 
@@ -275,47 +278,51 @@ for k in tqdm(k_l):
     order_k_l.append(get_r_2(PCA(n_components=1).fit_transform(h_np), loc_y_np))
     accuracy_k_l.append(accuracy_l[-1])
     pr_k_l.append(calc_PR(h_np).real)
+    W_list_l.append([W.detach().cpu().numpy() for W in model.W_ih] + [model.output_layer[0].weight.detach().cpu().numpy()])
 
-    # indices = np.argsort(loc_y_np)
-    # fig, axs = plt.subplots(2, 3, figsize=(15, 10))
-    # axs[0,0].set_axis_off(); axs[0,2].set_axis_off()
-    # axs[0,1].plot(loss_l)
-    # axs[0,1].set_yscale('log')
-    # ax2 = axs[0,1].twinx()
-    # ax2.plot(accuracy_l, 'r')
-    # axs[0,1].set_title("Loss")
-    # ax2.axhline(y=1, color='gray', linestyle='--')
-    # for var, var_name, ax in zip([X_dist, y_dist, hidden_dist], ['X', 'y', 'hidden'], axs[1]):
-    #     ax.imshow(var[indices][:, indices], cmap='viridis')
-    #     ax.set_title(f'{var_name} distance matrix')
-    # plt.tight_layout()
-    # plt.show()
+with open('RNN_corridor_res.pkl', 'wb') as f:
+    pkl.dump([k_l, order_k_l, accuracy_k_l, pr_k_l, W_list_l], f)
 
-    # pca = PCA().fit(h_np)
-    # X_reduced = pca.transform(h_np)
-    # fig = plt.figure(figsize=(10, 10))
+indices = np.argsort(loc_y_np)
+fig, axs = plt.subplots(2, 3, figsize=(15, 10))
+axs[0,0].set_axis_off(); axs[0,2].set_axis_off()
+axs[0,1].plot(loss_l)
+axs[0,1].set_yscale('log')
+ax2 = axs[0,1].twinx()
+ax2.plot(accuracy_l, 'r')
+axs[0,1].set_title("Loss")
+ax2.axhline(y=1, color='gray', linestyle='--')
+for var, var_name, ax in zip([X_dist, y_dist, hidden_dist], ['X', 'y', 'hidden'], axs[1]):
+    ax.imshow(var[indices][:, indices], cmap='viridis')
+    ax.set_title(f'{var_name} distance matrix')
+plt.tight_layout()
+plt.show()
 
-    # # Add cumulative explained variance ratio in the first row
-    # ax1 = fig.add_subplot(3, 3, 2)
-    # ax1.plot(np.cumsum(pca.explained_variance_ratio_), marker='o')
-    # ax1.set_xlabel('Number of Components')
-    # ax1.set_ylabel('Cumulative Explained Variance')
-    # ax1.set_title('Cumulative Explained Variance Ratio')
+pca = PCA().fit(h_np)
+X_reduced = pca.transform(h_np)
+fig = plt.figure(figsize=(10, 10))
 
-    # # Add scatter plots in the second row
-    # for i in range(3):
-    #     for j, c in enumerate([loc_y_np, action_taken_np]):
-    #         ax = fig.add_subplot(3, 3, i + 4 + j*3)
-    #         # c = loc_y
-    #         # c = action_taken[inds]
-    #         s = ax.scatter(X_reduced[:, i], X_reduced[:, i+1], c=c, cmap='coolwarm', alpha=0.7)
-    #         ax.set_xlabel(f'Component {i+1} ({pca.explained_variance_ratio_[i]*100:.2f}%)')
-    #         ax.set_ylabel(f'Component {i+2} ({pca.explained_variance_ratio_[i+1]*100:.2f}%)'),
-    #         ax.axis('equal')
-    #         fig.colorbar(s, ax=ax)
+# Add cumulative explained variance ratio in the first row
+ax1 = fig.add_subplot(3, 3, 2)
+ax1.plot(np.cumsum(pca.explained_variance_ratio_), marker='o')
+ax1.set_xlabel('Number of Components')
+ax1.set_ylabel('Cumulative Explained Variance')
+ax1.set_title('Cumulative Explained Variance Ratio')
 
-    # plt.tight_layout()
-    # plt.show()
+# Add scatter plots in the second row
+for i in range(3):
+    for j, c in enumerate([loc_y_np, action_taken_np]):
+        ax = fig.add_subplot(3, 3, i + 4 + j*3)
+        # c = loc_y
+        # c = action_taken[inds]
+        s = ax.scatter(X_reduced[:, i], X_reduced[:, i+1], c=c, cmap='coolwarm', alpha=0.7)
+        ax.set_xlabel(f'Component {i+1} ({pca.explained_variance_ratio_[i]*100:.2f}%)')
+        ax.set_ylabel(f'Component {i+2} ({pca.explained_variance_ratio_[i+1]*100:.2f}%)'),
+        ax.axis('equal')
+        fig.colorbar(s, ax=ax)
+
+plt.tight_layout()
+plt.show()
 
 fig, axs = plt.subplots(1, 3, figsize=(15, 5))
 axs[0].plot(k_l, accuracy_k_l, marker='o')
@@ -327,3 +334,9 @@ axs[2].plot(k_l, pr_k_l, marker='o')
 axs[2].set_title('PR')
 [ax.set_xlabel('k') for ax in axs]
 plt.show()
+
+W_l = [W.detach().cpu().numpy() for W in model.W_ih] + [model.output_layer[0].weight.detach().cpu().numpy()]
+W_eff = W_l[0].T
+for W in W_l[1:]:
+    W_eff = W_eff @ W.T
+plt.plot(W_eff)
