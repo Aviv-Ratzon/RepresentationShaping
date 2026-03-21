@@ -130,18 +130,18 @@ class Config:
 
 C = Config()
 
-C.G = 0.8
+C.G = 0.85
 C.sig_h_2 = 1e-8
 C.linear_net = True
 C.split_actions = False
-C.learning_rate = 0.0005
-C.L=3
+C.learning_rate = 0.0001
+C.L=5
 C.print_progress = True
 C.length_corridors = [20]*1
 C.max_move = 1
 C.hidden_size = 40
 C.gpu_id = 4
-C.num_epochs = 100000
+C.num_epochs = 10000
 C.algo_name = 'Adam'
 C.fixed_output = False
 C.loss_fn = nn.CrossEntropyLoss()
@@ -282,6 +282,9 @@ for k in tqdm(k_l):
 
 with open('RNN_corridor_res.pkl', 'wb') as f:
     pkl.dump([k_l, order_k_l, accuracy_k_l, pr_k_l, W_list_l], f)
+
+with open('RNN_corridor_res.pkl', 'rb') as f:
+    k_l, order_k_l, accuracy_k_l, pr_k_l, W_list_l = pkl.load(f)
 
 indices = np.argsort(loc_y_np)
 fig, axs = plt.subplots(2, 3, figsize=(15, 10))

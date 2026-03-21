@@ -60,7 +60,6 @@ def theta_to_state_dict(theta, model_dict, shapes=None, sizes=None):
     new_model_dict = {k: v for k, v in zip(model_dict.keys(), W_l_new)}
     return new_model_dict
 
-use_gpu = True
 
 
 class Config:
@@ -69,6 +68,7 @@ class Config:
         self.gpu_id=0
         self.seed=0
         self.print_progress=False
+        self.use_gpu = True
 
         # Data
         self.one_hot_actions=True
@@ -195,11 +195,11 @@ def train_model(C: Config, X, y, model, action_taken):
                 # hidden_l.append([h.cpu().detach().numpy() for h in hidden_states])
 
             if epoch in sample_inds:
-                outputs, hidden_states = model(X)
-                loss = criterion(outputs, y)
+                outputs, hidden_states = model(X_train)
+                loss = criterion(outputs, y_train)
                 loss_l.append(loss.item()/y_var)
                 if C.one_hot_inputs:
-                    accuracy_l.append((outputs.argmax(dim=1) == y.argmax(dim=1)).float().mean().item())
+                    accuracy_l.append((outputs.argmax(dim=1) == y_train.argmax(dim=1)).float().mean().item())
                     if (accuracy_l[-1] == 1 or loss_l[-1] < loss_thresh) and C.early_stopping:
                         # print('perfect accuracy reached, stopping')
                         break
@@ -233,7 +233,7 @@ def train_model(C: Config, X, y, model, action_taken):
 
 
 def run_sim(C: Config):
-    device = torch.device(f"cuda:{C.gpu_id}" if torch.cuda.is_available() and use_gpu else "cpu")
+    device = torch.device(f"cuda:{C.gpu_id}" if torch.cuda.is_available() and C.use_gpu else "cpu")
     if C.seed is not None:
         torch.manual_seed(C.seed)
         np.random.seed(C.seed)
