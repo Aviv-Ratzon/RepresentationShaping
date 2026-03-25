@@ -1,5 +1,140 @@
 import numpy as np
+from scipy.spatial.distance import pdist, squareform
+from copy import deepcopy
 from tqdm import tqdm
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+
+np.random.seed(0)
+torch.manual_seed(0)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def path_between_indices(a: int, b: int) -> list[int]:
+    """
+    Return the shortest path from node a to node b in a binary tree
+    indexed like:
+        1
+      2   3
+     4 5 6 7
+
+    Actions:
+        0 = up
+        1 = down left
+        2 = down right
+    """
+    if a < 1 or b < 1:
+        raise ValueError("Indices must be positive integers.")
+
+    # Build ancestor paths from each node to root
+    path_a = []
+    x = a
+    while x >= 1:
+        path_a.append(x)
+        x //= 2
+
+    path_b = []
+    x = b
+    while x >= 1:
+        path_b.append(x)
+        x //= 2
+
+    # Reverse so they go root -> node
+    path_a.reverse()
+    path_b.reverse()
+
+    # Find first index where they differ
+    i = 0
+    while i < len(path_a) and i < len(path_b) and path_a[i] == path_b[i]:
+        i += 1
+
+    # path_a[i-1] is the LCA
+    lca_depth = i
+
+    # Steps up from a to LCA
+    up_moves = [0] * (len(path_a) - lca_depth)
+
+    # Steps down from LCA to b
+    down_moves = []
+    for node in path_b[lca_depth:]:
+        if node % 2 == 0:
+            down_moves.append(1)  # left child
+        else:
+            down_moves.append(2)  # right child
+
+    return up_moves + down_moves
+
+
+class LinearRNN(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, bias=False):
+        super().__init__()
+        
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        
+        self.W_ih = nn.ParameterList()
+        self.biases = nn.ParameterList() if bias else None
+        
+        for layer in range(num_layers):
+            in_dim = input_size if layer == 0 else hidden_size
+            
+            self.W_ih.append(
+                nn.Parameter(torch.randn(hidden_size, in_dim) * 0.02)
+            )
+            
+            if bias:
+                self.biases.append(
+                    nn.Parameter(torch.zeros(hidden_size))
+                )
+            
+        self.output_layer = nn.Sequential(nn.Linear(hidden_size, output_size, bias=bias))
+
+    def forward(self, x, h0=None):
+        """
+        batch_first=True
+
+        x:  (batch_size, seq_len, input_size)
+        h0: (num_layers, batch_size, hidden_size)
+        """
+        batch_size, seq_len, _ = x.shape
+
+        # IMPORTANT: avoid in-place writes into a tensor view (e.g. h[layer] = ...)
+        # because it breaks autograd versioning. Keep h as a Python list and stack
+        # only at the end.
+        if h0 is None:
+            h = [x.new_zeros(batch_size, self.hidden_size) for _ in range(self.num_layers)]
+        else:
+            h = [h0[layer] for layer in range(self.num_layers)]
+
+        outputs = []
+        hidden_states = []
+        for t in range(seq_len):
+            input_t = x[:, t, :]  # (B, in_dim)
+
+            for layer in range(self.num_layers):
+                prev_h = h[layer]  # (B, H)
+
+                linear = (
+                    input_t @ self.W_ih[layer].T
+                    + prev_h
+                )
+
+                if self.biases is not None:
+                    linear = linear + self.biases[layer]  # broadcast over batch
+
+                h[layer] = F.relu(linear)
+                input_t = h[layer]  # input to next layer
+
+            hidden_states.append(h[-1])
+            outputs.append(self.output_layer(h[-1]))
+        
+        hidden_states = torch.stack(hidden_states, dim=1)  # (B, T, H)
+        outputs = torch.stack(outputs, dim=1)  # (B, T, H)
+        
+        return outputs, hidden_states
 
 def depth(i: int) -> int:
     """Compute depth of node i (root has depth 0)."""
@@ -41,7 +176,7 @@ def tree_distance(i: int, j: int) -> int:
 
     return di + dj - 2 * da
 
-def Tree():
+class Tree():
     def __init__(self, d, k):
         self.d = d
         self.states = np.arange(1, 2**d)
@@ -51,41 +186,46 @@ def Tree():
         self.states_in = np.eye(self.n_states)
         self.actions_in = np.eye(len(self.actions))
         self.k = k
+        self.distance_matrix = np.zeros((self.n_states, self.n_states))
+        for i in range(self.n_states):
+            for j in range(self.n_states):
+                self.distance_matrix[i, j] = tree_distance(i+1, j+1)
     
     def walk(self, state_start):
+        target_state = np.where(self.distance_matrix[state_start-1] <= self.k)[0][0]+1
+        path = path_between_indices(state_start, target_state)
         X_seq = []
         y_seq = []
         loc_X_seq = []
         loc_y_seq = []
-        depth_X_seq = []
-        depth_y_seq = []
         action_taken_seq = []
-        direction_taken_seq = []
         state_curr = state_start
-        for _ in range(self.k):
-            state_next, action = self.take_action(state_curr)
-            X_seq.append(np.concatenate([self.states_in[state_curr], self.actions_in[action]]))
-            y_seq.append(self.states_in[state_next])
+        for i in range(self.k):
+            state_next, action = self.take_action(state_curr, path[i] if i < len(path) else None)
+            X_seq.append(np.concatenate([(i==0)*self.states_in[state_curr-1], self.actions_in[action]]))
+            y_seq.append(self.states_in[state_next-1])
             loc_X_seq.append(state_curr)
             loc_y_seq.append(state_next)
-            depth_X_seq.append(int(np.log2(state_curr)) + 1)
-            depth_y_seq.append(int(np.log2(state_next)) + 1)
             action_taken_seq.append(action)
-            direction_taken_seq.append(direction)
             state_curr = state_next
-        return X_seq, y_seq, loc_X_seq, loc_y_seq, depth_X_seq, depth_y_seq, action_taken_seq, direction_taken_seq
+        return X_seq, y_seq, loc_X_seq, loc_y_seq, action_taken_seq
         
-    def take_action(self, state_curr):
-        next_state = -1
-        while next_state not in self.states:
-            action = np.random.choice(self.actions)
-            if action == 0:
-                state_next = state_curr//2
-            elif action == 1:
-                state_next = state_curr*2
-            elif action == 2:
-                state_next = state_curr*2 + 1
-        return state_next, action
+    def take_action(self, state_curr, action=None):
+        if action is not None:
+            next_state = state_curr + action
+        else:
+            next_state = -1
+            while next_state not in self.states:
+                action = np.random.choice(self.actions)
+                if action == 0:
+                    next_state = state_curr//2
+                elif action == 1:
+                    next_state = state_curr*2
+                elif action == 2:
+                    next_state = state_curr*2 + 1
+        if next_state not in self.states:
+            raise ValueError(f'Next state {next_state} not in states, start state: {state_curr}, action: {action}')
+        return next_state, action
     
 
 
@@ -94,59 +234,28 @@ sim_l = []
 sim_mat_l = []
 matrices_l = []
 loss_l_l = []
-for A in range(1, d):
+for k in range(1, (d-1)*2+1):
     # A = 4
-    states = np.arange(1, 2**d)
-    n_states = len(states)
-    actions = np.arange(0, A+1)
-    T_depth = int(np.log2(n_states)) + 1
-    states_in = np.eye(n_states)
-    actions_in = np.eye(A*3+1)
-
-    def get_actions_in(action, direction_idx):
-        idx = 0 if action == 0 else direction_idx*A + action
-        return actions_in[idx]
-
+    tree = Tree(d, k)
     X = []
     y = []
     loc_X = []
     loc_y = []
-    depth_X = []
-    depth_y = []
     action_taken = []
-    direction_taken = []
-    for state in states:
-        s_depth = int(np.log2(state)) + 1
-        for action in actions:
-            for direction_idx, direction in enumerate(['up', 'left', 'right']):
-                direction_val = -1 if direction == 'up' else 1
-                if s_depth + action*direction_val < 1 or s_depth + action*direction_val > T_depth or (action == 0 and direction_idx != 0):
-                    continue
-                s_next = state
-                for _ in range(action):
-                    if direction == 'up':
-                        s_next = s_next//2
-                    elif direction == 'left':
-                        s_next = s_next*2
-                    elif direction == 'right':
-                        s_next = s_next*2 + 1
-                        
-                X.append(np.concatenate([states_in[state-1], get_actions_in(action, direction_idx)]))
-                y.append(states_in[s_next-1])
-                loc_X.append(state)
-                loc_y.append(s_next)
-                depth_X.append(s_depth)
-                depth_y.append(int(np.log2(s_next)) + 1)
-                action_taken.append(action)
-                direction_taken.append(direction_idx)
+    for state in tree.states:
+        for _ in range(100):
+            X_seq, y_seq, loc_X_seq, loc_y_seq, action_taken_seq = tree.walk(state)
+            X.append(X_seq)
+            y.append(y_seq)
+            loc_X.append(loc_X_seq)
+            loc_y.append(loc_y_seq)
+            action_taken.append(action_taken_seq)
+
     X = np.array(X)
     y = np.array(y)
     loc_X = np.array(loc_X)
     loc_y = np.array(loc_y)
-    depth_X = np.array(depth_X)
-    depth_y = np.array(depth_y)
     action_taken = np.array(action_taken)
-    direction_taken = np.array(direction_taken)
     print(f'X shape: {X.shape}')
     print(f'y shape: {y.shape}')
 
@@ -156,10 +265,7 @@ for A in range(1, d):
     print(f'y[{i}]: {y[i]}')
     print(f'loc_X[{i}]: {loc_X[i]}')
     print(f'loc_y[{i}]: {loc_y[i]}')
-    print(f'depth_X[{i}]: {depth_X[i]}')
-    print(f'depth_y[{i}]: {depth_y[i]}')
     print(f'action_taken[{i}]: {action_taken[i]}')
-    print(f'direction_taken[{i}]: {direction_taken[i]}')
 
     import torch
     import torch.nn as nn
@@ -168,58 +274,64 @@ for A in range(1, d):
     from sklearn.decomposition import PCA
 
     # Prepare data for torch
-    X_tensor = torch.tensor(X, dtype=torch.float32)
-    y_tensor = torch.tensor(y, dtype=torch.float32)
+    X_tensor = torch.tensor(X, dtype=torch.float32).to(device)
+    y_tensor = torch.tensor(y, dtype=torch.float32).to(device)
 
-    class FeedForwardNN(nn.Module):
-        def __init__(self, input_dim, hidden_dims, output_dim, init_scale=0.01):
-            super(FeedForwardNN, self).__init__()
-            layers = []
-            prev_dim = input_dim
-            self.init_scale = init_scale
-            for h in hidden_dims:
-                linear = nn.Linear(prev_dim, h)
-                nn.init.normal_(linear.weight, mean=0.0, std=self.init_scale)
-                nn.init.constant_(linear.bias, 0.0)
-                layers.append(linear)
-                layers.append(nn.ReLU())
-                prev_dim = h
-            self.hidden = nn.Sequential(*layers)
-            self.out = nn.Linear(prev_dim, output_dim)
-            # Do not apply init_scale to output layer -- use default init
-        def forward(self, x):
-            z = self.hidden(x)
-            out = self.out(z)
-            return out, z
+    # Create model
+    input_size = X.shape[2]
+    output_size = y.shape[2]
+    hidden_size = 512
+    n_layers = 1
+    model = LinearRNN(input_size, hidden_size, output_size, n_layers).to(device)
+    initial_weights = deepcopy(model.state_dict())
+    with torch.no_grad():
+        outputs, hidden_states = model(X_tensor)
+        print(f'Sig_2 of last hidden: {hidden_states[-1].var().item()}')
 
-    input_dim = X.shape[1]
-    hidden_dims = [1024]*5
-    output_dim = y.shape[1]
-    model = FeedForwardNN(input_dim, hidden_dims, output_dim)
-
-    # Loss and optimizer
+    # Loss function and optimizer
     criterion = nn.MSELoss()
-    optimizer = optim.AdamW(model.parameters(), lr=0.00001, weight_decay=0.01)
+    optimizer = optim.Adam(model.parameters(), lr=0.01)
 
+    y_var = y_tensor.var().cpu()
     # Training loop
     loss_l = []
-    epochs = 10000
-    for epoch in tqdm(range(epochs)):
+    accuracy_l = []
+    hidden_l = []
+    for epoch in tqdm(range(1000)):
         optimizer.zero_grad()
-        output, _ = model(X_tensor)
-        loss = criterion(output, y_tensor)
+        outputs, hidden = model(X_tensor)
+        if isinstance(criterion, nn.MSELoss):
+            loss = criterion(outputs, y_tensor)
+        else:
+            loss = criterion(outputs.view(-1, outputs.size(-1)), y_tensor.argmax(-1).view(-1))
         loss.backward()
         optimizer.step()
-        if epoch % 10 == 0:
-            # print(f"Epoch {epoch}, Loss: {loss.item():.4f}")
-            loss_l.append(loss.item()/y.var().item())
-    # Get last hidden layer activations
-    with torch.no_grad():
-        _, activations = model(X_tensor)
-        activations_np = activations.detach().numpy()
+        loss_l.append(loss.item()/y_var)
+        accuracy_l.append((outputs.argmax(dim=-1) == y_tensor.argmax(dim=-1)).float().mean().item())
+        hidden_l.append([h.cpu().detach().numpy() for h in hidden_states])
 
-    accuracy = (output.argmax(dim=-1) == y_tensor.argmax(dim=-1)).float().mean().item()
-    print(f"Accuracy: {accuracy:.4f}, loss: {loss.item()/y.var().item():.4f}")
+    print(f'Loss: {loss.item()/y_var}, Accuracy: {accuracy_l[-1]}')
+    # Testing
+    with torch.no_grad():
+        outputs, hidden_states = model(X_tensor)
+    # print(criterion(outputs, y).item()/y_var)
+
+    only_first_step = True
+    if only_first_step:
+        X = X_tensor.cpu().numpy()[:,0,:]
+        y = y_tensor.cpu().numpy()[:,0,:]
+        h_np = hidden_states.detach().cpu().numpy()[:,0,:]
+        loc_y = loc_y[:,0]
+        loc_X = loc_X[:,0]
+        action_taken = action_taken[:,0]
+    else:
+        X = X_tensor.cpu().numpy().reshape(-1, X_tensor.shape[2])  # Convert to numpy array if X is a torch tensor
+        y = y_tensor.cpu().numpy().reshape(-1, y_tensor.shape[2])  # Convert to numpy array if y is a torch tensor
+        h_np = hidden_states.detach().cpu().numpy().reshape(-1, hidden_states.shape[-1])  # Convert to numpy array if hidden is a torch tensor
+        loc_y = loc_y.reshape(-1)
+        loc_X = loc_X.reshape(-1)
+        action_taken = action_taken.reshape(-1)
+
 
     # plt.plot(loss_l)
     # plt.yscale('log')
@@ -244,7 +356,7 @@ for A in range(1, d):
     import seaborn as sns
 
     # Calculate the pairwise distance matrix of last hidden layer activations
-    distance_matrix = squareform(pdist(activations_np, metric='euclidean'))
+    distance_matrix = squareform(pdist(h_np, metric='euclidean'))
 
     distance_matrix_states = np.zeros_like(distance_matrix)
     for i in range(X.shape[0]):
@@ -381,6 +493,7 @@ plt.show()
 
 for i, loss_l in enumerate(loss_l_l):
     plt.plot(loss_l, label=f'A={i+1}')
+plt.axhline(1, ls='--', c='k', alpha=0.5)
 plt.yscale('log')
 plt.legend()
 plt.show()
