@@ -1,3 +1,4 @@
+import os
 import numpy as np
 from scipy.spatial.distance import pdist, squareform
 from copy import deepcopy
@@ -5,12 +6,14 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+import matplotlib.pyplot as plt
 
 np.random.seed(0)
 torch.manual_seed(0)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
+os.makedirs('test_tree', exist_ok=True)
 
 def path_between_indices(a: int, b: int) -> list[int]:
     """
@@ -82,7 +85,7 @@ class LinearRNN(nn.Module):
             in_dim = input_size if layer == 0 else hidden_size
             
             self.W_ih.append(
-                nn.Parameter(torch.randn(hidden_size, in_dim) * 0.02)
+                nn.Parameter(torch.randn(hidden_size, in_dim) * 0.9/np.sqrt(in_dim))
             )
             
             if bias:
@@ -125,7 +128,7 @@ class LinearRNN(nn.Module):
                 if self.biases is not None:
                     linear = linear + self.biases[layer]  # broadcast over batch
 
-                h[layer] = F.relu(linear)
+                h[layer] = linear # F.relu(linear)
                 input_t = h[layer]  # input to next layer
 
             hidden_states.append(h[-1])
@@ -191,8 +194,12 @@ class Tree():
             for j in range(self.n_states):
                 self.distance_matrix[i, j] = tree_distance(i+1, j+1)
     
-    def walk(self, state_start):
-        target_state = np.where(self.distance_matrix[state_start-1] <= self.k)[0][0]+1
+    def walk(self, state_start, i=None):
+        if i is None:
+            target_state = np.random.choice(np.where(self.distance_matrix[state_start-1] <= self.k)[0])+1
+        else:
+            nghbr_states = np.where(self.distance_matrix[state_start-1] <= self.k)[0]
+            target_state = nghbr_states[i%len(nghbr_states)]+1
         path = path_between_indices(state_start, target_state)
         X_seq = []
         y_seq = []
@@ -212,29 +219,32 @@ class Tree():
         
     def take_action(self, state_curr, action=None):
         if action is not None:
-            next_state = state_curr + action
+            next_state = self.move(state_curr, action)
         else:
             next_state = -1
             while next_state not in self.states:
                 action = np.random.choice(self.actions)
-                if action == 0:
-                    next_state = state_curr//2
-                elif action == 1:
-                    next_state = state_curr*2
-                elif action == 2:
-                    next_state = state_curr*2 + 1
+                next_state = self.move(state_curr, action)
         if next_state not in self.states:
             raise ValueError(f'Next state {next_state} not in states, start state: {state_curr}, action: {action}')
         return next_state, action
     
+    def move(self, state, action):
+        if action == 0:
+            next_state = state//2
+        elif action == 1:
+            next_state = state*2
+        elif action == 2:
+            next_state = state*2 + 1
+        return next_state
 
-
-d = 4
+d = 5
 sim_l = []
 sim_mat_l = []
 matrices_l = []
 loss_l_l = []
-for k in range(1, (d-1)*2+1):
+k_l = np.arange(1, 2*d-2)
+for k in k_l:
     # A = 4
     tree = Tree(d, k)
     X = []
@@ -243,8 +253,8 @@ for k in range(1, (d-1)*2+1):
     loc_y = []
     action_taken = []
     for state in tree.states:
-        for _ in range(100):
-            X_seq, y_seq, loc_X_seq, loc_y_seq, action_taken_seq = tree.walk(state)
+        for i in range(2**d-1):
+            X_seq, y_seq, loc_X_seq, loc_y_seq, action_taken_seq = tree.walk(state, i)
             X.append(X_seq)
             y.append(y_seq)
             loc_X.append(loc_X_seq)
@@ -281,7 +291,7 @@ for k in range(1, (d-1)*2+1):
     input_size = X.shape[2]
     output_size = y.shape[2]
     hidden_size = 512
-    n_layers = 1
+    n_layers = 2
     model = LinearRNN(input_size, hidden_size, output_size, n_layers).to(device)
     initial_weights = deepcopy(model.state_dict())
     with torch.no_grad():
@@ -289,15 +299,15 @@ for k in range(1, (d-1)*2+1):
         print(f'Sig_2 of last hidden: {hidden_states[-1].var().item()}')
 
     # Loss function and optimizer
-    criterion = nn.MSELoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.01)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
     y_var = y_tensor.var().cpu()
     # Training loop
     loss_l = []
     accuracy_l = []
     hidden_l = []
-    for epoch in tqdm(range(1000)):
+    for epoch in tqdm(range(10000)):
         optimizer.zero_grad()
         outputs, hidden = model(X_tensor)
         if isinstance(criterion, nn.MSELoss):
@@ -441,17 +451,22 @@ for k in range(1, (d-1)*2+1):
     matrices_l.append(matrices)
     loss_l_l.append(loss_l)
 
+fig = plt.figure(figsize=(10, 5))
 plt.plot(sim_l, marker='o')
 plt.ylim(0, 1)
+fig.savefig('test_tree/sim_l.png')
+plt.show()
 
 inputs_states_sim = [sim_mat[2,1] for sim_mat in sim_mat_l]
 inputs_hidden_sim = [sim_mat[0,2] for sim_mat in sim_mat_l]
 hidden_states_sim = [sim_mat[0,1] for sim_mat in sim_mat_l]
 
+fig = plt.figure(figsize=(10, 5))
 plt.plot(inputs_states_sim, marker='o', label='Inputs vs States')
 plt.plot(inputs_hidden_sim, marker='o', label='Inputs vs Hidden')
 plt.plot(hidden_states_sim, marker='o', label='Hidden vs States')
 plt.legend()
+fig.savefig('test_tree/inputs_states_hidden_sim.png')
 plt.show()
 
 state_distance = distance_matrix_states[np.triu_indices_from(distance_matrix_states, k=1)]
@@ -468,13 +483,16 @@ df = df.sort_values('state_distance')
 unique_states = np.unique(state_distance)
 data_to_plot = [df[df['state_distance'] == val]['hidden_distance'].values for val in unique_states]
 
+fig = plt.figure(figsize=(10, 5))
 plt.boxplot(data_to_plot, positions=unique_states)
 plt.xlabel('State Distance')
 plt.ylabel('Hidden Distance')
 plt.title('Hidden Distance Distribution for Each State Distance')
 plt.xticks(unique_states.astype(int), unique_states.astype(int))  
+fig.savefig('test_tree/hidden_distance_distribution_boxplot.png')
 plt.show()
 
+fig = plt.figure(figsize=(10, 5))
 for i, matrices in enumerate(matrices_l):
     hidden_distance = matrices[0][np.triu_indices_from(matrices[0], k=1)]
     state_distance = matrices[1][np.triu_indices_from(matrices[1], k=1)]
@@ -489,11 +507,29 @@ for i, matrices in enumerate(matrices_l):
     data_to_plot = [df[df['state_distance'] == val]['hidden_distance'].values for val in unique_states]
     plt.plot([d.mean() for d in data_to_plot], marker='o', label=f'A={i+1}')
 plt.legend()
+fig.savefig('test_tree/hidden_distance_distribution.png')
 plt.show()
 
+fig = plt.figure(figsize=(10, 5))
 for i, loss_l in enumerate(loss_l_l):
     plt.plot(loss_l, label=f'A={i+1}')
 plt.axhline(1, ls='--', c='k', alpha=0.5)
 plt.yscale('log')
 plt.legend()
+fig.savefig('test_tree/loss.png')
+plt.show()
+
+from scipy.stats import spearmanr
+
+corr_l = []
+coverage_l = []
+for i, matrices in enumerate(matrices_l):
+    hidden_distance = matrices[0][np.triu_indices_from(matrices[0], k=1)]
+    state_distance = matrices[1][np.triu_indices_from(matrices[1], k=1)]
+    coverage_l.append((state_distance < k_l[i]).mean())
+    corr_l.append(spearmanr(hidden_distance, state_distance).correlation)
+fig = plt.figure(figsize=(10, 5))
+plt.plot(coverage_l, corr_l, marker='o')
+plt.ylim(-0.1, 1)
+fig.savefig('test_tree/coverage_corr.png')
 plt.show()
