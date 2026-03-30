@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 np.random.seed(0)
 torch.manual_seed(0)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f'Using device: {device}')
 
 
 os.makedirs('test_tree', exist_ok=True)
@@ -71,7 +72,7 @@ def path_between_indices(a: int, b: int) -> list[int]:
 
 
 class LinearRNN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, bias=False):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, num_hidden_output_layers=1, bias=True):
         super().__init__()
         
         self.input_size = input_size
@@ -92,7 +93,12 @@ class LinearRNN(nn.Module):
                 self.biases.append(
                     nn.Parameter(torch.zeros(hidden_size))
                 )
-            
+        
+        hidden_output_layers = nn.ModuleList()
+        for _ in range(num_hidden_output_layers):
+            hidden_output_layers.append(nn.Linear(hidden_size, hidden_size, bias=bias))
+            hidden_output_layers.append(nn.ReLU())
+        self.hidden_output_layers = nn.Sequential(*hidden_output_layers)
         self.output_layer = nn.Sequential(nn.Linear(hidden_size, output_size, bias=bias))
 
     def forward(self, x, h0=None):
@@ -128,9 +134,9 @@ class LinearRNN(nn.Module):
                 if self.biases is not None:
                     linear = linear + self.biases[layer]  # broadcast over batch
 
-                h[layer] = linear # F.relu(linear)
+                h[layer] = F.relu(linear) if True else linear
                 input_t = h[layer]  # input to next layer
-
+            h[-1] = self.hidden_output_layers(h[-1])
             hidden_states.append(h[-1])
             outputs.append(self.output_layer(h[-1]))
         
@@ -184,7 +190,7 @@ class Tree():
         self.d = d
         self.states = np.arange(1, 2**d)
         self.n_states = len(self.states)
-        self.actions = [0, 1, 2]
+        self.actions = [0, 1, 2, 3]
         self.T_depth = int(np.log2(self.n_states)) + 1
         self.states_in = np.eye(self.n_states)
         self.actions_in = np.eye(len(self.actions))
@@ -210,9 +216,9 @@ class Tree():
         for i in range(self.k):
             state_next, action = self.take_action(state_curr, path[i] if i < len(path) else None)
             X_seq.append(np.concatenate([(i==0)*self.states_in[state_curr-1], self.actions_in[action]]))
-            y_seq.append(self.states_in[state_next-1])
+            y_seq.append(self.states_in[state_curr-1])
             loc_X_seq.append(state_curr)
-            loc_y_seq.append(state_next)
+            loc_y_seq.append(state_curr)
             action_taken_seq.append(action)
             state_curr = state_next
         return X_seq, y_seq, loc_X_seq, loc_y_seq, action_taken_seq
@@ -236,15 +242,18 @@ class Tree():
             next_state = state*2
         elif action == 2:
             next_state = state*2 + 1
+        elif action == 3:
+            next_state = state
         return next_state
 
-d = 5
+d = 3
 sim_l = []
 sim_mat_l = []
 matrices_l = []
 loss_l_l = []
-k_l = np.arange(1, 2*d-2)
+k_l = np.arange(1, 2*(d-1)+1)
 for k in k_l:
+    print(f'############ k: {k} / {k_l[-1]} ############')
     # A = 4
     tree = Tree(d, k)
     X = []
@@ -291,7 +300,7 @@ for k in k_l:
     input_size = X.shape[2]
     output_size = y.shape[2]
     hidden_size = 512
-    n_layers = 2
+    n_layers = 5
     model = LinearRNN(input_size, hidden_size, output_size, n_layers).to(device)
     initial_weights = deepcopy(model.state_dict())
     with torch.no_grad():
@@ -300,13 +309,12 @@ for k in k_l:
 
     # Loss function and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=0.0001)
+    optimizer = optim.AdamW(model.parameters(), lr=0.0001)
 
     y_var = y_tensor.var().cpu()
     # Training loop
     loss_l = []
     accuracy_l = []
-    hidden_l = []
     for epoch in tqdm(range(10000)):
         optimizer.zero_grad()
         outputs, hidden = model(X_tensor)
@@ -318,9 +326,7 @@ for k in k_l:
         optimizer.step()
         loss_l.append(loss.item()/y_var)
         accuracy_l.append((outputs.argmax(dim=-1) == y_tensor.argmax(dim=-1)).float().mean().item())
-        hidden_l.append([h.cpu().detach().numpy() for h in hidden_states])
 
-    print(f'Loss: {loss.item()/y_var}, Accuracy: {accuracy_l[-1]}')
     # Testing
     with torch.no_grad():
         outputs, hidden_states = model(X_tensor)
@@ -403,15 +409,15 @@ for k in k_l:
     # The order used for all matrices:
     dm_hidden = distance_matrix[order][:, order]
     dm_tree = distance_matrix_states[order][:, order]
-    dm_inputs = distance_matrix_inputs[order][:, order]
-    dm_outputs = distance_matrix_outputs[order][:, order]
+    # dm_inputs = distance_matrix_inputs[order][:, order]
+    # dm_outputs = distance_matrix_outputs[order][:, order]
     
     # Filter all distance matrices
     filter = action_taken[order] <= 1
     dm_hidden = dm_hidden[filter][:, filter]
     dm_tree = dm_tree[filter][:, filter]
-    dm_inputs = dm_inputs[filter][:, filter]
-    dm_outputs = dm_outputs[filter][:, filter]
+    # dm_inputs = dm_inputs[filter][:, filter]
+    # dm_outputs = dm_outputs[filter][:, filter]
 
     # Since distance matrices are symmetric with zeros on diagonal, ignore diagonal and duplicate entries
     def extract_upper_triangular_values(mat):
@@ -421,8 +427,8 @@ for k in k_l:
     matrices = [
         dm_hidden,
         dm_tree,
-        dm_inputs,
-        dm_outputs
+        # dm_inputs,
+        # dm_outputs
     ]
     vecs = [extract_upper_triangular_values(m) for m in matrices]
 
@@ -445,6 +451,7 @@ for k in k_l:
     # plt.title("Similarity between distance matrices")
     # plt.tight_layout()
     # plt.show()
+    print(f'Loss: {loss.item()/y_var}, Accuracy: {accuracy_l[-1]}')
 
     sim_l.append(similarity[0,1])
     sim_mat_l.append(similarity)
@@ -457,13 +464,13 @@ plt.ylim(0, 1)
 fig.savefig('test_tree/sim_l.png')
 plt.show()
 
-inputs_states_sim = [sim_mat[2,1] for sim_mat in sim_mat_l]
-inputs_hidden_sim = [sim_mat[0,2] for sim_mat in sim_mat_l]
+# inputs_states_sim = [sim_mat[2,1] for sim_mat in sim_mat_l]
+# inputs_hidden_sim = [sim_mat[0,2] for sim_mat in sim_mat_l]
 hidden_states_sim = [sim_mat[0,1] for sim_mat in sim_mat_l]
 
 fig = plt.figure(figsize=(10, 5))
-plt.plot(inputs_states_sim, marker='o', label='Inputs vs States')
-plt.plot(inputs_hidden_sim, marker='o', label='Inputs vs Hidden')
+# plt.plot(inputs_states_sim, marker='o', label='Inputs vs States')
+# plt.plot(inputs_hidden_sim, marker='o', label='Inputs vs Hidden')
 plt.plot(hidden_states_sim, marker='o', label='Hidden vs States')
 plt.legend()
 fig.savefig('test_tree/inputs_states_hidden_sim.png')
@@ -526,10 +533,11 @@ coverage_l = []
 for i, matrices in enumerate(matrices_l):
     hidden_distance = matrices[0][np.triu_indices_from(matrices[0], k=1)]
     state_distance = matrices[1][np.triu_indices_from(matrices[1], k=1)]
-    coverage_l.append((state_distance < k_l[i]).mean())
+    coverage_l.append((state_distance <= k_l[i]).mean())
     corr_l.append(spearmanr(hidden_distance, state_distance).correlation)
 fig = plt.figure(figsize=(10, 5))
 plt.plot(coverage_l, corr_l, marker='o')
 plt.ylim(-0.1, 1)
+plt.xlim(-0,1.1)
 fig.savefig('test_tree/coverage_corr.png')
 plt.show()
