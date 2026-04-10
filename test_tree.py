@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 np.random.seed(0)
 torch.manual_seed(0)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = 'cuda:4'
 print(f'Using device: {device}')
 
 
@@ -72,7 +73,7 @@ def path_between_indices(a: int, b: int) -> list[int]:
 
 
 class LinearRNN(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, num_layers, num_hidden_output_layers=1, bias=True):
+    def __init__(self, input_size, hidden_size, output_size, num_layers, num_hidden_output_layers=3, bias=True):
         super().__init__()
         
         self.input_size = input_size
@@ -121,7 +122,10 @@ class LinearRNN(nn.Module):
         outputs = []
         hidden_states = []
         for t in range(seq_len):
-            input_t = x[:, t, :]  # (B, in_dim)
+            if x[:, t, :].sum() == 0:
+                input_t = outputs[-1].detach()
+            else:
+                input_t = x[:, t, :]  # (B, in_dim)
 
             for layer in range(self.num_layers):
                 prev_h = h[layer]  # (B, H)
@@ -246,12 +250,12 @@ class Tree():
             next_state = state
         return next_state
 
-d = 3
+d = 4
 sim_l = []
 sim_mat_l = []
 matrices_l = []
 loss_l_l = []
-k_l = np.arange(1, 2*(d-1)+1)
+k_l = np.arange(1, 3*(d-1)+1)
 for k in k_l:
     print(f'############ k: {k} / {k_l[-1]} ############')
     # A = 4
@@ -309,7 +313,7 @@ for k in k_l:
 
     # Loss function and optimizer
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.AdamW(model.parameters(), lr=0.0001)
+    optimizer = optim.Adam(model.parameters(), lr=0.00001)
 
     y_var = y_tensor.var().cpu()
     # Training loop
@@ -528,6 +532,7 @@ plt.show()
 
 from scipy.stats import spearmanr
 
+# PLOT 1
 corr_l = []
 coverage_l = []
 for i, matrices in enumerate(matrices_l):
@@ -540,4 +545,26 @@ plt.plot(coverage_l, corr_l, marker='o')
 plt.ylim(-0.1, 1)
 plt.xlim(-0,1.1)
 fig.savefig('test_tree/coverage_corr.png')
+plt.show()
+
+# PLOT 2
+corr_l = []
+for i, matrices in enumerate(matrices_l):
+    hidden_distance = matrices[0][np.triu_indices_from(matrices[0], k=1)]
+    state_distance = matrices[1][np.triu_indices_from(matrices[1], k=1)]
+    # Make sure state_distance and hidden_distance are numpy arrays of same length
+    # Group hidden_distance values according to each unique value in state_distance
+    df = pd.DataFrame({'state_distance': state_distance, 'hidden_distance': hidden_distance})
+
+    # Sort by state_distance for nicer plots (optional)
+    df = df.sort_values('state_distance')
+
+    unique_states = np.unique(state_distance)
+    data_to_plot = [df[df['state_distance'] == val]['hidden_distance'].values for val in unique_states]
+    mean_h_distance = [d.mean() for d in data_to_plot]
+    corr_l.append(spearmanr(unique_states, mean_h_distance).correlation)
+fig = plt.figure(figsize=(10, 5))
+plt.plot(corr_l, marker='o')
+plt.ylim(-0.1, 1)
+fig.savefig('test_tree/corr.png')
 plt.show()
