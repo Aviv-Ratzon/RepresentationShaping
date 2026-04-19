@@ -138,11 +138,12 @@ def train_model(C: Config, X, y, model, action_taken):
         model = model.double()  # Convert to float64 for higher precision
         X = X.double()
         y = y.double()
-    
-    X_test = X[omit_inds]
-    y_test = y[omit_inds]
-    X_train = np.delete(X, omit_inds, axis=0)
-    y_train = np.delete(y, omit_inds, axis=0)
+    keep_mask = np.ones(X.shape[0], dtype=bool)
+    keep_mask[omit_inds] = False
+    X_test = X[~keep_mask]
+    y_test = y[~keep_mask]
+    X_train = X[keep_mask]
+    y_train = y[keep_mask]
     
     y_var = y.var().cpu().item() if isinstance(criterion, nn.MSELoss) else 1
     # Training loop

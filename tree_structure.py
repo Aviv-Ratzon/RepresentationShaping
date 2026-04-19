@@ -1,5 +1,7 @@
 import argparse
 import os
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import Iterable, Optional
  
@@ -150,6 +152,8 @@ class TreeEnv:
             while next_state not in self.states:
                 action = int(rng.choice(self.actions))
                 next_state = self.move(state_curr, action)
+            # action = 3
+            # next_state = state_curr
         if next_state not in self.states:
             raise ValueError(
                 f"Next state {next_state} not in states, start={state_curr}, action={action}"
@@ -180,8 +184,8 @@ class TreeEnv:
                 axis=0,
             ).astype(np.float32, copy=False)
             X_seq.append(x_t)
-            y_seq.append(self.states_in[state_curr - 1])
-            loc_y_seq.append(state_curr)
+            y_seq.append(self.states_in[state_next - 1])
+            loc_y_seq.append(state_next)
             action_taken_seq.append(action)
             state_curr = state_next
  
@@ -218,6 +222,7 @@ class LinearRNN(nn.Module):
         output_size: int,
         num_layers: int,
         num_hidden_output_layers: int = 3,
+        dropout_p: float = 0.0,
         bias: bool = True,
     ):
         super().__init__()
@@ -243,6 +248,7 @@ class LinearRNN(nn.Module):
             hidden_output_layers.append(nn.ReLU())
         self.hidden_output_layers = nn.Sequential(*hidden_output_layers)
         self.output_layer = nn.Linear(hidden_size, output_size, bias=bias)
+        self.dropout = nn.Dropout(p=dropout_p)
  
     def forward(self, x: torch.Tensor, h0: Optional[torch.Tensor] = None) -> tuple[torch.Tensor, torch.Tensor]:
         """
@@ -268,6 +274,7 @@ class LinearRNN(nn.Module):
                 if self.biases is not None:
                     linear = linear + self.biases[layer]
                 h[layer] = F.relu(linear)
+                h[layer] = self.dropout(h[layer])
                 input_t = h[layer]
             # h[-1] = self.hidden_output_layers(h[-1])
             hidden_states.append(h[-1])
@@ -288,6 +295,10 @@ class Metrics:
 class TrainOutput:
     metrics: Metrics
     loss_curve: np.ndarray  # (epochs,)
+    plot1_state_distance: np.ndarray
+    plot1_hidden_distance: np.ndarray
+    plot2_state_distance: np.ndarray
+    plot2_hidden_distance: np.ndarray
  
  
 def _sem(x: np.ndarray, axis: int = 0) -> np.ndarray:
@@ -311,7 +322,6 @@ def _condensed_tree_distances(state_dm: np.ndarray, loc_y: np.ndarray) -> np.nda
 def compute_plot_metrics(
     h_np: np.ndarray,
     loc_y: np.ndarray,
-    action_taken: np.ndarray,
     state_distance_matrix: np.ndarray,
 ) -> tuple[float, float]:
     """
@@ -325,14 +335,38 @@ def compute_plot_metrics(
  
     hidden_d = pdist(h_f, metric="euclidean").astype(np.float64, copy=False)
     tree_d = _condensed_tree_distances(state_distance_matrix, loc_f)
- 
     plot1 = float(spearmanr(hidden_d, tree_d).correlation)
- 
-    uniq = np.unique(tree_d)
-    mean_hidden_by_d = np.array([hidden_d[tree_d == val].mean() for val in uniq], dtype=np.float64)
-    plot2 = float(spearmanr(uniq, mean_hidden_by_d).correlation)
+
+    h_f_mean = np.stack([h_f[loc_f==i].mean(0) for i in np.unique(loc_f)])
+    loc_f_mean = np.unique(loc_f)
+    hidden_d_mean = pdist(h_f_mean, metric="euclidean").astype(np.float64, copy=False)
+    tree_d_mean = _condensed_tree_distances(state_distance_matrix, loc_f_mean)
+    plot2 = float(spearmanr(hidden_d_mean, tree_d_mean).correlation)
  
     return plot1, plot2
+
+
+def compute_plot_distance_data(
+    h_np: np.ndarray,
+    loc_y: np.ndarray,
+    state_distance_matrix: np.ndarray,
+    *,
+    max_points: int,
+    sample_seed: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return raw and aggregated distance relations used for plot1/plot2."""
+    hidden_d = pdist(h_np, metric="euclidean").astype(np.float64, copy=False)
+    state_d = _condensed_tree_distances(state_distance_matrix, loc_y)
+
+    if max_points > 0 and hidden_d.size > max_points:
+        rng = np.random.default_rng(sample_seed)
+        idx = rng.choice(hidden_d.size, size=max_points, replace=False)
+        hidden_d = hidden_d[idx]
+        state_d = state_d[idx]
+
+    uniq = np.unique(state_d)
+    mean_hidden_by_d = np.array([hidden_d[state_d == val].mean() for val in uniq], dtype=np.float64)
+    return state_d, hidden_d, uniq, mean_hidden_by_d
  
  
 def train_and_evaluate(
@@ -349,6 +383,12 @@ def train_and_evaluate(
     device: torch.device,
     state_distance_matrix: np.ndarray,
     model_seed: int,
+    max_scatter_points: int,
+    weight_decay: float,
+    l1_lambda: float,
+    activity_l2_lambda: float,
+    dropout_p: float,
+    grad_clip_norm: float,
 ) -> TrainOutput:
     X_t = torch.tensor(X, dtype=torch.float32, device=device)
     y_t = torch.tensor(y_onehot, dtype=torch.float32, device=device)
@@ -361,11 +401,17 @@ def train_and_evaluate(
         output_size=y_onehot.shape[2],
         num_layers=n_layers,
         num_hidden_output_layers=num_hidden_output_layers,
+        dropout_p=dropout_p,
         bias=True,
     ).to(device)
  
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3 if n_layers == 1 else 1e-5)
+    # Don't touch the hard-set learning rate
+    optimizer = torch.optim.SGD(
+        model.parameters(),
+        lr=1e-1 if n_layers == 1 else 1e-4,
+        weight_decay=weight_decay,
+    )
  
     y_var = float(y_t.var().detach().cpu().item())
     if y_var == 0 or isinstance(criterion, nn.CrossEntropyLoss):
@@ -375,38 +421,67 @@ def train_and_evaluate(
     loss_hist = torch.empty((epochs,), device=device, dtype=torch.float32)
     for ep in range(epochs):
         optimizer.zero_grad(set_to_none=True)
-        outputs, _ = model(X_t)
-        loss = criterion(outputs.reshape(-1, outputs.size(-1)), y_idx.reshape(-1))
-        loss.backward()
+        outputs, hidden_train = model(X_t)
+        base_loss = criterion(outputs.reshape(-1, outputs.size(-1)), y_idx.reshape(-1))
+
+        reg_loss = torch.zeros((), device=device)
+        if l1_lambda > 0:
+            reg_loss = reg_loss + l1_lambda * sum(p.abs().sum() for p in model.parameters())
+        if activity_l2_lambda > 0:
+            reg_loss = reg_loss + activity_l2_lambda * hidden_train.pow(2).mean()
+
+        train_loss = base_loss + reg_loss
+        train_loss.backward()
+        if grad_clip_norm > 0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip_norm)
         optimizer.step()
-        loss_hist[ep] = loss.detach()
- 
+        loss_hist[ep] = base_loss.detach()
     model.eval()
+    n_states = y_t.shape[2]
+    a_0_ind = -1
+    X_test = torch.zeros((n_states, 1, X_t.shape[2]), dtype=torch.float32, device=device)
+    for i in range(n_states):
+        X_test[i, 0, i] = 1
+    X_test[:, 0, a_0_ind] = 1
     with torch.no_grad():
-        outputs, hidden_states = model(X_t)
-        loss = criterion(outputs.reshape(-1, outputs.size(-1)), y_idx.reshape(-1))
-        acc = (outputs.argmax(dim=-1) == y_idx).float().mean().item()
+        outputs_train_eval, _ = model(X_t)
+        loss = criterion(outputs_train_eval.reshape(-1, outputs_train_eval.size(-1)), y_idx.reshape(-1))
+        acc = (outputs_train_eval.argmax(dim=-1) == y_idx).float().mean().item()
+
+        outputs, hidden_states = model(X_test)
  
         # Only first step, matching your original script.
         h_np = hidden_states[:, 0, :].detach().cpu().numpy()
-        loc_first = loc_y[:, 0]
-        action_first = action_taken[:, 0]
+        loc_first = np.arange(1, n_states+1)
  
     plot1, plot2 = compute_plot_metrics(
         h_np=h_np,
         loc_y=loc_first,
-        action_taken=action_first,
         state_distance_matrix=state_distance_matrix,
+    )
+    plot1_x, plot1_y, plot2_x, plot2_y = compute_plot_distance_data(
+        h_np=h_np,
+        loc_y=loc_first,
+        state_distance_matrix=state_distance_matrix,
+        max_points=max_scatter_points,
+        sample_seed=model_seed + 7,
     )
  
     loss_curve = (loss_hist / float(y_var)).detach().cpu().numpy()
     metrics = Metrics(
-        loss_norm=float(loss.detach().cpu().item()) / float(y_var),
+        loss_norm=float(loss) / float(y_var),
         accuracy=float(acc),
         plot1_spearman_hidden_vs_tree=plot1,
         plot2_spearman_distance_vs_mean_hidden=plot2,
     )
-    return TrainOutput(metrics=metrics, loss_curve=loss_curve)
+    return TrainOutput(
+        metrics=metrics,
+        loss_curve=loss_curve,
+        plot1_state_distance=plot1_x,
+        plot1_hidden_distance=plot1_y,
+        plot2_state_distance=plot2_x,
+        plot2_hidden_distance=plot2_y,
+    )
  
  
 @dataclass(frozen=True)
@@ -414,75 +489,234 @@ class SweepConfig:
     d: int = 4
     # If empty, defaults to k=1..3*(d-1) (matching your original sweep).
     k_values: tuple[int, ...] = ()
-    n_layers_values: tuple[int, ...] = (1, 5)
     n_seeds: int = 5
     base_seed: int = 0
     hidden_size: int = 512
-    num_hidden_output_layers: int = 1
     epochs: int = 100
     lr: float = 1e-3
+    num_workers: int = 4
+    gpu_ids: tuple[int, ...] = tuple(range(4,8))
+    max_scatter_points_per_job: int = 3000
+    # Sweep modes: (label, n_layers, weight_decay, l1_lambda, activity_l2_lambda, dropout_p)
+    # Default starter set:
+    # 1) all off
+    # 2) only n_layers "on"
+    # 3) only weight_decay "on"
+    # 4) only l1 "on"
+    # 5) only activity_l2 "on"
+    # 6) only dropout "on"
+    reg_mode_names: tuple[str, ...] = (
+        "none",
+        "5_layers",
+        # "w_decay",
+        # "l1",
+        # "l2",
+        # "dropout",
+        # "3_layers",
+    )
+    reg_mode_n_layers: tuple[int, ...] = (1, 5) #, 1, 1, 1, 1, 3)
+    reg_mode_weight_decay: tuple[float, ...] = (0.0, 0.0) #, 1e-4, 0.0, 0.0, 0.0, 0.0)
+    reg_mode_l1_lambda: tuple[float, ...] = (0.0, 0.0) #, 0.0, 1e-7, 0.0, 0.0, 0.0)
+    reg_mode_activity_l2_lambda: tuple[float, ...] = (0.0, 0.0) #, 0.0, 0.0, 1e-4, 0.0, 0.0)
+    reg_mode_dropout_p: tuple[float, ...] = (0.0, 0.0) #, 0.0, 0.0, 0.0, 0.1, 0.0)
+    num_hidden_output_layers: int = 1
+    grad_clip_norm: float = 1.0
     output_dir: str = "tree_structure"
     device: Optional[str] = None
+
+
+def _validate_mode_config(cfg: SweepConfig) -> None:
+    n = len(cfg.reg_mode_names)
+    lengths = {
+        "reg_mode_n_layers": len(cfg.reg_mode_n_layers),
+        "reg_mode_weight_decay": len(cfg.reg_mode_weight_decay),
+        "reg_mode_l1_lambda": len(cfg.reg_mode_l1_lambda),
+        "reg_mode_activity_l2_lambda": len(cfg.reg_mode_activity_l2_lambda),
+        "reg_mode_dropout_p": len(cfg.reg_mode_dropout_p),
+    }
+    bad = [f"{k}={v}" for k, v in lengths.items() if v != n]
+    if bad:
+        raise ValueError(
+            "All mode tuples must have same length as reg_mode_names "
+            f"(n={n}); got: {', '.join(bad)}"
+        )
+
+
+def _run_single_job_task(
+    *,
+    seed_idx: int,
+    seed: int,
+    k_idx: int,
+    k: int,
+    reg_idx: int,
+    cfg: SweepConfig,
+    gpu_id: Optional[int],
+) -> tuple[int, int, int, float, float, float, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Run a single (seed, k, n_layers) job."""
+    state_dm = compute_state_distance_matrix(cfg.d)
+    n_rollouts_per_state = 2**cfg.d - 1
+
+    if cfg.device is not None:
+        device = torch.device(cfg.device)
+    elif torch.cuda.is_available() and gpu_id is not None:
+        device = torch.device(f"cuda:{gpu_id}")
+    else:
+        device = torch.device("cpu")
+
+    rng = np.random.default_rng(seed + 10_000 * int(k))
+    env = TreeEnv(cfg.d, int(k), state_dm)
+    data = generate_dataset(env, n_rollouts_per_state=n_rollouts_per_state, rng=rng)
+    n_layers = int(cfg.reg_mode_n_layers[reg_idx])
+    weight_decay = float(cfg.reg_mode_weight_decay[reg_idx])
+    l1_lambda = float(cfg.reg_mode_l1_lambda[reg_idx])
+    activity_l2_lambda = float(cfg.reg_mode_activity_l2_lambda[reg_idx])
+    dropout_p = float(cfg.reg_mode_dropout_p[reg_idx])
+    out = train_and_evaluate(
+        data.X,
+        data.y,
+        data.loc_y,
+        data.action_taken,
+        n_layers=int(n_layers),
+        hidden_size=cfg.hidden_size,
+        num_hidden_output_layers=cfg.num_hidden_output_layers,
+        epochs=cfg.epochs,
+        lr=cfg.lr,
+        device=device,
+        state_distance_matrix=state_dm,
+        model_seed=seed + 1_000 * int(n_layers) + 100_000 * int(k) + 1_000_000 * int(reg_idx),
+        max_scatter_points=cfg.max_scatter_points_per_job,
+        weight_decay=weight_decay,
+        l1_lambda=l1_lambda,
+        activity_l2_lambda=activity_l2_lambda,
+        dropout_p=dropout_p,
+        grad_clip_norm=float(cfg.grad_clip_norm),
+    )
+    return (
+        seed_idx,
+        k_idx,
+        reg_idx,
+        out.metrics.loss_norm,
+        out.metrics.accuracy,
+        out.metrics.plot1_spearman_hidden_vs_tree,
+        out.metrics.plot2_spearman_distance_vs_mean_hidden,
+        out.loss_curve.astype(np.float32, copy=False),
+        out.plot1_state_distance,
+        out.plot1_hidden_distance,
+        out.plot2_state_distance,
+        out.plot2_hidden_distance,
+    )
  
  
 def run_sweep(cfg: SweepConfig) -> None:
     os.makedirs(cfg.output_dir, exist_ok=True)
+    _validate_mode_config(cfg)
  
-    device = torch.device(cfg.device) if cfg.device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
+    if cfg.device is not None:
+        print(f"Using explicit device: {cfg.device}")
+    elif torch.cuda.is_available():
+        print(f"Using multiprocessing with random GPU assignment from: {cfg.gpu_ids}")
+    else:
+        print("CUDA not available, running workers on CPU.")
  
-    k_values = cfg.k_values if len(cfg.k_values) > 0 else tuple(range(1, 3 * (cfg.d - 1) + 1))
-    state_dm = compute_state_distance_matrix(cfg.d)
-    n_rollouts_per_state = 2**cfg.d - 1
+    k_values = cfg.k_values if len(cfg.k_values) > 0 else tuple(range(1, 6 * (cfg.d - 1) + 1))
  
     K = len(k_values)
-    L = len(cfg.n_layers_values)
+    R = len(cfg.reg_mode_names)
     S = cfg.n_seeds
  
-    loss = np.zeros((L, S, K), dtype=np.float64)
-    accuracy = np.zeros((L, S, K), dtype=np.float64)
-    plot1 = np.zeros((L, S, K), dtype=np.float64)
-    plot2 = np.zeros((L, S, K), dtype=np.float64)
-    loss_curves = np.zeros((L, S, K, cfg.epochs), dtype=np.float32)
+    loss = np.zeros((R, S, K), dtype=np.float64)
+    accuracy = np.zeros((R, S, K), dtype=np.float64)
+    plot1 = np.zeros((R, S, K), dtype=np.float64)
+    plot2 = np.zeros((R, S, K), dtype=np.float64)
+    loss_curves = np.zeros((R, S, K, cfg.epochs), dtype=np.float32)
+    plot1_scatter_x = [[[] for _ in range(R)] for _ in range(K)]
+    plot1_scatter_y = [[[] for _ in range(R)] for _ in range(K)]
+    plot2_scatter_x = [[[] for _ in range(R)] for _ in range(K)]
+    plot2_scatter_y = [[[] for _ in range(R)] for _ in range(K)]
  
     seeds = [cfg.base_seed + i for i in range(cfg.n_seeds)]
- 
-    for s_idx, seed in enumerate(tqdm(seeds, desc="Seeds")):
-        for k_idx, k in enumerate(tqdm(k_values, desc="k", leave=False)):
-            # Make dataset randomness depend on (seed, k), but independent of model init.
-            rng = np.random.default_rng(seed + 10_000 * int(k))
-            np.random.seed(seed + 10_000 * int(k))
-            torch.manual_seed(seed + 10_000 * int(k))
-            env = TreeEnv(cfg.d, int(k), state_dm)
-            data = generate_dataset(env, n_rollouts_per_state=n_rollouts_per_state, rng=rng)
- 
-            for l_idx, n_layers in enumerate(tqdm(cfg.n_layers_values, desc="n_layers", leave=False)):
-                
-                out = train_and_evaluate(
-                    data.X,
-                    data.y,
-                    data.loc_y,
-                    data.action_taken,
-                    n_layers=int(n_layers),
-                    hidden_size=cfg.hidden_size,
-                    num_hidden_output_layers=cfg.num_hidden_output_layers,
-                    epochs=cfg.epochs,
-                    lr=cfg.lr,
-                    device=device,
-                    state_distance_matrix=state_dm,
-                    model_seed=seed + 1_000 * int(n_layers),
+    if cfg.device is None and torch.cuda.is_available():
+        n_available = torch.cuda.device_count()
+        gpu_ids = tuple(g for g in cfg.gpu_ids if 0 <= g < n_available)
+        if len(gpu_ids) == 0:
+            raise ValueError(f"No valid GPU IDs from {cfg.gpu_ids}; available are 0..{n_available-1}")
+    else:
+        gpu_ids = (None,)
+
+    jobs = []
+    for s_idx, seed in enumerate(seeds):
+        for k_idx, k in enumerate(k_values):
+            for reg_idx in range(R):
+                jobs.append((s_idx, seed, k_idx, int(k), reg_idx))
+
+    assign_rng = np.random.default_rng(cfg.base_seed + 99_999)
+    assigned_gpu_per_job = assign_rng.choice(gpu_ids, size=len(jobs), replace=True)
+
+    max_workers = max(1, min(int(cfg.num_workers), len(jobs)))
+    ctx = mp.get_context("spawn")
+
+    # #test single task
+    # _run_single_job_task(
+    #     seed_idx=0,
+    #     seed=0,
+    #     k_idx=0,
+    #     k=3,
+    #     reg_idx=0,
+    #     cfg=cfg,
+    #     gpu_id=None,
+    # )
+    # exit()
+    print(f"Running {len(jobs)} jobs with {max_workers} workers")
+    with ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx) as ex:
+        futures = []
+        for job_idx, (s_idx, seed, k_idx, k, reg_idx) in enumerate(jobs):
+            futures.append(
+                ex.submit(
+                    _run_single_job_task,
+                    seed_idx=s_idx,
+                    seed=seed,
+                    k_idx=k_idx,
+                    k=k,
+                    reg_idx=reg_idx,
+                    cfg=cfg,
+                    gpu_id=None if assigned_gpu_per_job[job_idx] is None else int(assigned_gpu_per_job[job_idx]),
                 )
- 
-                loss[l_idx, s_idx, k_idx] = out.metrics.loss_norm
-                accuracy[l_idx, s_idx, k_idx] = out.metrics.accuracy
-                plot1[l_idx, s_idx, k_idx] = out.metrics.plot1_spearman_hidden_vs_tree
-                plot2[l_idx, s_idx, k_idx] = out.metrics.plot2_spearman_distance_vs_mean_hidden
-                loss_curves[l_idx, s_idx, k_idx, :] = out.loss_curve.astype(np.float32, copy=False)
+            )
+
+        for fut in tqdm(as_completed(futures), total=len(jobs), desc="Jobs"):
+            (
+                s_idx,
+                k_idx,
+                reg_idx,
+                loss_v,
+                acc_v,
+                p1_v,
+                p2_v,
+                curve_v,
+                p1x,
+                p1y,
+                p2x,
+                p2y,
+            ) = fut.result()
+            loss[reg_idx, s_idx, k_idx] = loss_v
+            accuracy[reg_idx, s_idx, k_idx] = acc_v
+            plot1[reg_idx, s_idx, k_idx] = p1_v
+            plot2[reg_idx, s_idx, k_idx] = p2_v
+            loss_curves[reg_idx, s_idx, k_idx, :] = curve_v
+            plot1_scatter_x[k_idx][reg_idx].append(p1x)
+            plot1_scatter_y[k_idx][reg_idx].append(p1y)
+            plot2_scatter_x[k_idx][reg_idx].append(p2x)
+            plot2_scatter_y[k_idx][reg_idx].append(p2y)
  
     np.savez(
         os.path.join(cfg.output_dir, "results.npz"),
         k_values=np.asarray(k_values, dtype=np.int64),
-        n_layers_values=np.asarray(cfg.n_layers_values, dtype=np.int64),
+        reg_mode_names=np.asarray(cfg.reg_mode_names),
+        reg_mode_n_layers=np.asarray(cfg.reg_mode_n_layers, dtype=np.int64),
+        reg_mode_weight_decay=np.asarray(cfg.reg_mode_weight_decay, dtype=np.float64),
+        reg_mode_l1_lambda=np.asarray(cfg.reg_mode_l1_lambda, dtype=np.float64),
+        reg_mode_activity_l2_lambda=np.asarray(cfg.reg_mode_activity_l2_lambda, dtype=np.float64),
+        reg_mode_dropout_p=np.asarray(cfg.reg_mode_dropout_p, dtype=np.float64),
         loss=loss,
         accuracy=accuracy,
         plot1=plot1,
@@ -506,12 +740,14 @@ def run_sweep(cfg: SweepConfig) -> None:
     ax_p1 = axs[1, 0]
     ax_p2 = axs[1, 1]
  
-    for l_idx, n_layers in enumerate(cfg.n_layers_values):
-        label = f"n_layers={n_layers}"
-        ax_loss.errorbar(k_arr, loss_mean[l_idx], yerr=loss_sem[l_idx], marker="o", capsize=3, label=label)
-        ax_acc.errorbar(k_arr, acc_mean[l_idx], yerr=acc_sem[l_idx], marker="o", capsize=3, label=label)
-        ax_p1.errorbar(k_arr, plot1_mean[l_idx], yerr=plot1_sem[l_idx], marker="o", capsize=3, label=label)
-        ax_p2.errorbar(k_arr, plot2_mean[l_idx], yerr=plot2_sem[l_idx], marker="o", capsize=3, label=label)
+    for reg_idx, mode_name in enumerate(cfg.reg_mode_names):
+        label = (
+            f"{mode_name}"
+        )
+        ax_loss.errorbar(k_arr, loss_mean[reg_idx], yerr=loss_sem[reg_idx], marker="o", capsize=3, label=label)
+        ax_acc.errorbar(k_arr, acc_mean[reg_idx], yerr=acc_sem[reg_idx], marker="o", capsize=3, label=label)
+        ax_p1.errorbar(k_arr, plot1_mean[reg_idx], yerr=plot1_sem[reg_idx], marker="o", capsize=3, label=label)
+        ax_p2.errorbar(k_arr, plot2_mean[reg_idx], yerr=plot2_sem[reg_idx], marker="o", capsize=3, label=label)
  
     ax_loss.set_title("Loss (normalized)")
     ax_loss.set_xlabel("k")
@@ -543,12 +779,56 @@ def run_sweep(cfg: SweepConfig) -> None:
     fig.savefig(out_path, dpi=200)
     print(f"Saved figure to: {out_path}")
 
+    # Scatter figure: rows are k values, columns are [plot1, plot2],
+    # with x=state distance, y=hidden distance, colored by n_layers.
+    fig_scatter, axs_scatter = plt.subplots(
+        nrows=K,
+        ncols=2,
+        figsize=(10, max(2.4 * K, 4.0)),
+        squeeze=False,
+    )
+    colors = plt.cm.tab10(np.linspace(0, 1, max(2, R)))
+
+    for k_idx, k in enumerate(k_values):
+        ax1 = axs_scatter[k_idx, 0]
+        ax2 = axs_scatter[k_idx, 1]
+
+        for reg_idx, mode_name in enumerate(cfg.reg_mode_names):
+            p1x = np.concatenate(plot1_scatter_x[k_idx][reg_idx]) if len(plot1_scatter_x[k_idx][reg_idx]) > 0 else np.array([])
+            p1y = np.concatenate(plot1_scatter_y[k_idx][reg_idx]) if len(plot1_scatter_y[k_idx][reg_idx]) > 0 else np.array([])
+            p2x = np.concatenate(plot2_scatter_x[k_idx][reg_idx]) if len(plot2_scatter_x[k_idx][reg_idx]) > 0 else np.array([])
+            p2y = np.concatenate(plot2_scatter_y[k_idx][reg_idx]) if len(plot2_scatter_y[k_idx][reg_idx]) > 0 else np.array([])
+            label = (
+                f"{mode_name}"
+                if k_idx == 0
+                else None
+            )
+            ax1.scatter(p1x, p1y, s=6, alpha=0.35, color=colors[reg_idx], label=label)
+            ax2.scatter(p2x, p2y, s=10, alpha=0.65, color=colors[reg_idx], label=label)
+
+        ax1.set_ylabel(f"k={k}\nhidden distance")
+        ax2.set_ylabel("hidden distance")
+        ax1.grid(True, alpha=0.3)
+        ax2.grid(True, alpha=0.3)
+
+        if k_idx == 0:
+            ax1.set_title("PLOT 1: pairwise distances")
+            ax2.set_title("PLOT 2: mean hidden per state distance")
+            ax1.legend(loc="best", fontsize=8)
+
+    axs_scatter[-1, 0].set_xlabel("state distance")
+    axs_scatter[-1, 1].set_xlabel("state distance")
+    fig_scatter.tight_layout()
+    scatter_path = os.path.join(cfg.output_dir, "plot_scatter.png")
+    fig_scatter.savefig(scatter_path, dpi=200)
+    print(f"Saved scatter figure to: {scatter_path}")
+
     # Loss curves over epochs: one subplot per (n_layers, k), one line per seed.
     epochs_arr = np.arange(1, cfg.epochs + 1, dtype=np.int64)
     fig2, axs2 = plt.subplots(
-        nrows=L,
+        nrows=R,
         ncols=K,
-        figsize=(3.2 * K, 2.4 * L),
+        figsize=(3.2 * K, 2.4 * R),
         sharex=True,
         sharey=True,
     )
@@ -560,19 +840,19 @@ def run_sweep(cfg: SweepConfig) -> None:
     if not np.isfinite(y_max) or y_max <= y_min:
         y_max = max(1e-2, y_min * 10)
 
-    for l_idx, n_layers in enumerate(cfg.n_layers_values):
+    for reg_idx, mode_name in enumerate(cfg.reg_mode_names):
         for k_idx, k in enumerate(k_values):
-            ax = axs2[l_idx, k_idx]
+            ax = axs2[reg_idx, k_idx]
             for s_idx, seed in enumerate(seeds):
-                ax.plot(epochs_arr, loss_curves[l_idx, s_idx, k_idx], alpha=0.8, linewidth=1.0)
+                ax.plot(epochs_arr, loss_curves[reg_idx, s_idx, k_idx], alpha=0.8, linewidth=1.0)
             ax.set_yscale("log")
             ax.set_ylim(y_min, y_max)
             ax.grid(True, alpha=0.25)
-            if l_idx == 0:
+            if reg_idx == 0:
                 ax.set_title(f"k={k}")
             if k_idx == 0:
-                ax.set_ylabel(f"n_layers={n_layers}\nloss")
-            if l_idx == L - 1:
+                ax.set_ylabel(f"{mode_name}\nloss")
+            if reg_idx == R - 1:
                 ax.set_xlabel("epoch")
 
     fig2.tight_layout()
@@ -593,13 +873,21 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
     p.add_argument("--k-values", nargs="*", default=None, help="Explicit k values (e.g. --k-values 1 2 3).")
     p.add_argument("--k-min", type=int, default=None)
     p.add_argument("--k-max", type=int, default=None)
-    p.add_argument("--n-layers", nargs="*", default=None, help="n_layers sweep (e.g. --n-layers 1 3 5).")
-    p.add_argument("--n-seeds", type=int, default=5)
+    p.add_argument("--n-seeds", type=int, default=2)
     p.add_argument("--base-seed", type=int, default=0)
     p.add_argument("--hidden-size", type=int, default=512)
     p.add_argument("--num-hidden-output-layers", type=int, default=3)
-    p.add_argument("--epochs", type=int, default=10000)
+    p.add_argument("--epochs", type=int, default=100000)
     p.add_argument("--lr", type=float, default=1e-4)
+    p.add_argument("--num-workers", type=int, default=4)
+    p.add_argument("--gpu-ids", nargs="*", default=None, help="GPU IDs sampled randomly per seed task (default: 0..7).")
+    p.add_argument("--mode-names", nargs="*", default=None, help="Regularization mode labels.")
+    p.add_argument("--mode-n-layers", nargs="*", default=None, help="n_layers value per mode.")
+    p.add_argument("--mode-weight-decay", nargs="*", default=None, help="weight_decay value per mode.")
+    p.add_argument("--mode-l1-lambda", nargs="*", default=None, help="l1_lambda value per mode.")
+    p.add_argument("--mode-activity-l2-lambda", nargs="*", default=None, help="activity_l2_lambda value per mode.")
+    p.add_argument("--mode-dropout-p", nargs="*", default=None, help="dropout_p value per mode.")
+    p.add_argument("--grad-clip-norm", type=float, default=1.0, help="Clip gradient norm; <=0 disables clipping.")
     p.add_argument("--device", type=str, default=None, help='e.g. "cuda", "cuda:0", "cpu"')
     p.add_argument("--output-dir", type=str, default="tree_structure")
  
@@ -614,20 +902,53 @@ def main(argv: Optional[Iterable[str]] = None) -> None:
         else:
             k_values = tuple(range(1, 3 * (args.d - 1) + 1 + 0))
  
-    n_layers_values = _parse_int_list(args.n_layers)
-    if n_layers_values is None:
-        n_layers_values = (1, 5)
+    gpu_ids = _parse_int_list(args.gpu_ids)
+    if gpu_ids is None:
+        gpu_ids = tuple(range(8))
+
+    mode_names = tuple(args.mode_names) if args.mode_names is not None and len(args.mode_names) > 0 else None
+    mode_n_layers = _parse_int_list(args.mode_n_layers)
+    mode_weight_decay = tuple(float(v) for v in args.mode_weight_decay) if args.mode_weight_decay else None
+    mode_l1_lambda = tuple(float(v) for v in args.mode_l1_lambda) if args.mode_l1_lambda else None
+    mode_activity_l2_lambda = (
+        tuple(float(v) for v in args.mode_activity_l2_lambda) if args.mode_activity_l2_lambda else None
+    )
+    mode_dropout_p = tuple(float(v) for v in args.mode_dropout_p) if args.mode_dropout_p else None
+
+    default_modes = SweepConfig()
+    reg_mode_names = default_modes.reg_mode_names if mode_names is None else mode_names
+    reg_mode_n_layers = default_modes.reg_mode_n_layers if mode_n_layers is None else tuple(int(v) for v in mode_n_layers)
+    reg_mode_weight_decay = (
+        default_modes.reg_mode_weight_decay if mode_weight_decay is None else tuple(float(v) for v in mode_weight_decay)
+    )
+    reg_mode_l1_lambda = (
+        default_modes.reg_mode_l1_lambda if mode_l1_lambda is None else tuple(float(v) for v in mode_l1_lambda)
+    )
+    reg_mode_activity_l2_lambda = (
+        default_modes.reg_mode_activity_l2_lambda
+        if mode_activity_l2_lambda is None
+        else tuple(float(v) for v in mode_activity_l2_lambda)
+    )
+    reg_mode_dropout_p = default_modes.reg_mode_dropout_p if mode_dropout_p is None else tuple(float(v) for v in mode_dropout_p)
  
     cfg = SweepConfig(
         d=int(args.d),
         k_values=tuple(int(k) for k in k_values),
-        n_layers_values=tuple(int(n) for n in n_layers_values),
         n_seeds=int(args.n_seeds),
         base_seed=int(args.base_seed),
         hidden_size=int(args.hidden_size),
         num_hidden_output_layers=int(args.num_hidden_output_layers),
         epochs=int(args.epochs),
         lr=float(args.lr),
+        num_workers=int(args.num_workers),
+        gpu_ids=tuple(int(g) for g in gpu_ids),
+        reg_mode_names=reg_mode_names,
+        reg_mode_n_layers=reg_mode_n_layers,
+        reg_mode_weight_decay=reg_mode_weight_decay,
+        reg_mode_l1_lambda=reg_mode_l1_lambda,
+        reg_mode_activity_l2_lambda=reg_mode_activity_l2_lambda,
+        reg_mode_dropout_p=reg_mode_dropout_p,
+        grad_clip_norm=float(args.grad_clip_norm),
         output_dir=str(args.output_dir),
         device=args.device,
     )
