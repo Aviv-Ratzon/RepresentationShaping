@@ -30,3 +30,4 @@ __pycache__/run_sim.cpython-310.pyc
 *.npz
 *.json
 *.csv
+*__pycache__
