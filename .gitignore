@@ -28,3 +28,5 @@ __pycache__/run_sim.cpython-310.pyc
 /checkpoints
 /checkpoints_non_cyclic
 *.npz
+*.json
+*.csv

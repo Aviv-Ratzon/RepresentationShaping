@@ -282,7 +282,7 @@ def run_single_task(task: SweepTask) -> dict[str, Any]:
     ).to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr/(2**cfg.num_layers), weight_decay=cfg.l2_reg)
+    optimizer = torch.optim.SGD(model.parameters(), lr=cfg.lr/(2**cfg.num_layers+1), weight_decay=cfg.l2_reg)
 
     train_loss = 0.0
     train_acc = 0.0
@@ -521,48 +521,84 @@ def _plot_loss_curves_for_sweep(
     return output_path
 
 
+def _save_sweep_results(
+    base_config: TrainConfig,
+    sweep_name: str,
+    sweep_values: list[float],
+    results: list[dict[str, Any]],
+    results_path: str,
+) -> None:
+    with open(results_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "base_config": asdict(base_config),
+                "sweep_name": sweep_name,
+                "sweep_values": sweep_values,
+                "results": results,
+            },
+            f,
+            indent=2,
+        )
+
+
+def _load_sweep_results(results_path: str) -> dict[str, Any]:
+    with open(results_path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    if "results" not in payload:
+        raise ValueError(f"Malformed saved results in {results_path}: missing 'results' key.")
+    return payload
+
+
 def run_all_sweeps(
     base_config: TrainConfig,
     sweeps: dict[str, list[float]],
     output_dir: str,
     n_workers: int,
+    reuse_saved: bool = False,
+    plot_only: bool = False,
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
 
     for sweep_name, sweep_values in sweeps.items():
-        tasks = _make_sweep_tasks(sweep_name, sweep_values, base_config)
-        desc = f"{sweep_name} ({len(tasks)} jobs)"
-        print(f"\nStarting sweep '{sweep_name}' with {len(sweep_values)} values and {len(tasks)} tasks")
-
-        if n_workers == 1:
-            results = [run_single_task(task) for task in tqdm(tasks, desc=desc)]
-        else:
-            ctx = mp.get_context("spawn")
-            with ctx.Pool(
-                processes=n_workers,
-                initializer=_init_pool_worker,
-                initargs=(base_config.gpu_devices,),
-            ) as pool:
-                results = list(tqdm(pool.imap_unordered(run_single_task, tasks), total=len(tasks), desc=desc))
-
-        results = sorted(results, key=lambda r: (r["sweep_value"], r["k"]))
-        plot_path = _plot_single_sweep(sweep_name, sweep_values, results, output_dir)
-        loss_plot_path = _plot_loss_curves_for_sweep(sweep_name, sweep_values, results, output_dir)
         results_path = os.path.join(output_dir, f"sweep_{sweep_name}.json")
-        # with open(results_path, "w", encoding="utf-8") as f:
-        #     json.dump(
-        #         {
-        #             "base_config": asdict(base_config),
-        #             "sweep_name": sweep_name,
-        #             "sweep_values": sweep_values,
-        #             "results": results,
-        #         },
-        #         f,
-        #         indent=2,
-        #     )
+        use_saved = plot_only or (reuse_saved and os.path.exists(results_path))
+
+        if use_saved:
+            if not os.path.exists(results_path):
+                raise FileNotFoundError(
+                    f"Saved results not found for sweep '{sweep_name}'. Expected file: {results_path}"
+                )
+            payload = _load_sweep_results(results_path)
+            results = payload["results"]
+            # Prefer saved values to keep plotting consistent even if CLI config changed.
+            sweep_values_for_plot = payload.get("sweep_values", sweep_values)
+            source_label = "saved (plot-only)" if plot_only else "saved (reuse)"
+            print(f"\nUsing {source_label} results for sweep '{sweep_name}' from {results_path}")
+        else:
+            tasks = _make_sweep_tasks(sweep_name, sweep_values, base_config)
+            desc = f"{sweep_name} ({len(tasks)} jobs)"
+            print(f"\nStarting sweep '{sweep_name}' with {len(sweep_values)} values and {len(tasks)} tasks")
+
+            if n_workers == 1:
+                results = [run_single_task(task) for task in tqdm(tasks, desc=desc)]
+            else:
+                ctx = mp.get_context("spawn")
+                with ctx.Pool(
+                    processes=n_workers,
+                    initializer=_init_pool_worker,
+                    initargs=(base_config.gpu_devices,),
+                ) as pool:
+                    results = list(tqdm(pool.imap_unordered(run_single_task, tasks), total=len(tasks), desc=desc))
+
+            results = sorted(results, key=lambda r: (r["sweep_value"], r["k"]))
+            _save_sweep_results(base_config, sweep_name, sweep_values, results, results_path)
+            sweep_values_for_plot = sweep_values
+            print(f"Saved metrics: {results_path}")
+
+        plot_path = _plot_single_sweep(sweep_name, list(sweep_values_for_plot), results, output_dir)
+        loss_plot_path = _plot_loss_curves_for_sweep(sweep_name, list(sweep_values_for_plot), results, output_dir)
         print(f"Saved figure: {plot_path}")
         print(f"Saved loss-curves figure: {loss_plot_path}")
-        print(f"Saved metrics: {results_path}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -589,7 +625,17 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated CUDA devices used when --device=random_cuda.",
     )
     parser.add_argument("--base-seed", type=int, default=0, help="Global seed for reproducibility.")
-    parser.add_argument("--n-seeds", type=int, default=20, help="Number of random seeds per (sweep value, k).")
+    parser.add_argument("--n-seeds", type=int, default=40, help="Number of random seeds per (sweep value, k).")
+    parser.add_argument(
+        "--reuse-saved",
+        action="store_true",
+        help="If a sweep JSON exists, load and plot it instead of retraining that sweep.",
+    )
+    parser.add_argument(
+        "--plot-only",
+        action="store_true",
+        help="Only load saved sweep JSON files and regenerate plots; never train.",
+    )
     return parser.parse_args()
 
 
@@ -627,6 +673,8 @@ def main() -> None:
         sweeps=sweeps,
         output_dir=args.output_dir,
         n_workers=max(1, args.workers),
+        reuse_saved=bool(args.reuse_saved),
+        plot_only=bool(args.plot_only),
     )
 
 
