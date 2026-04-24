@@ -6,16 +6,40 @@ from run_sim import Config
 from predictive_coding_network import train_deep_pcn
 import pickle
 import multiprocessing as mp
+import torch
+
+
+_WORKER_PINNED_DEVICE: str | None = None
 
 # X: shape (n_samples, n_features)
 # y:
 #   - classification: integer labels, shape (n_samples,)
 #   - regression: continuous targets, shape (n_samples, output_dim)
+def _resolve_device(device_name: str) -> str:
+    if not torch.cuda.is_available():
+        return "cpu"
+    if device_name.startswith("cuda"):
+        return device_name
+    return "cpu"
+
+
+def _init_pool_worker(gpu_devices: tuple[str, ...]) -> None:
+    global _WORKER_PINNED_DEVICE
+    if not gpu_devices:
+        _WORKER_PINNED_DEVICE = "cpu"
+        return
+
+    identity = mp.current_process()._identity
+    worker_idx = identity[0] - 1 if identity else 0
+    selected = gpu_devices[worker_idx % len(gpu_devices)]
+    _WORKER_PINNED_DEVICE = _resolve_device(selected)
+
+
 def run_single_sim(task: tuple[int, int, int, int]) -> tuple[int, int, float, float, float]:
     i_seed, seed, i_max_move, max_move = task
 
     C = Config()
-    C.length_corridors = [20]
+    C.length_corridors = [30]
     C.max_move = max_move
     C.one_hot_inputs = True
     C.one_hot_actions = True
@@ -39,14 +63,14 @@ def run_single_sim(task: tuple[int, int, int, int]) -> tuple[int, int, float, fl
         batch_size=X.shape[0],
         seed=seed,
         verbose=False,
-        device='cpu',
+        device=_WORKER_PINNED_DEVICE or "cpu",
     )
 
     # PCA of the last hidden layer (falls back to output layer if no hidden layer exists)
     r2_score, pr_score = model.plot_pca_last_layer(
         X[abs(action_taken) <= 1],
         y[abs(action_taken) <= 1],
-        save_path=f"last_layer_pca_seed{seed}_maxmove{max_move}.png",
+        save_path=f"last_layer_pca_seed.png",
         title=f"PCA seed={seed}, max_move={max_move}",
         show=False,
     )
@@ -67,9 +91,10 @@ def save_results(result_path: str, r2_l: np.ndarray, pr_l: np.ndarray, train_sco
 
 
 def main() -> None:
-    max_move_l = np.arange(1, 20)
+    max_move_l = np.arange(1, 30)
     n_seeds = 10
     result_path = "result_arrays.pkl"
+    gpu_devices = ("cuda:4", "cuda:5", "cuda:6", "cuda:7")
 
     r2_l = np.zeros((len(max_move_l), n_seeds))
     pr_l = np.zeros((len(max_move_l), n_seeds))
@@ -81,7 +106,7 @@ def main() -> None:
             tasks.append((i_seed, seed, i_max_move, int(max_move)))
 
     n_workers = 8
-    with mp.Pool(processes=n_workers) as pool:
+    with mp.Pool(processes=n_workers, initializer=_init_pool_worker, initargs=(gpu_devices,)) as pool:
         for i_max_move, i_seed, r2_score, pr_score, train_score in tqdm(
             pool.imap_unordered(run_single_sim, tasks),
             total=len(tasks),
@@ -119,3 +144,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
