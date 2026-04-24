@@ -3,6 +3,7 @@ from sklearn.linear_model import LinearRegression
 from itertools import combinations
 import matplotlib.pyplot as plt
 from numpy.polynomial.chebyshev import chebvander
+from itertools import product
 
 
 def generate_twisted_polynomial_vector(x, input_dim=100, min_deg=5, max_deg=10):
@@ -124,7 +125,7 @@ for data_bool, tag in zip([latent_bool, X_bool], ['latent', 'observations']):
     # We look for the lowest degree polynomial that solves the task.
     # We expect degree 3 because the task is cubic: (s+a)^3...
 
-    max_search_degree = 10 # We search up to degree 4
+    max_search_degree = m+1 # We search up to degree 4
     all_indices = range(m)
 
     # Pre-generate basis functions is too slow for m=20 if we do ALL combinations.
