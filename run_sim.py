@@ -124,11 +124,11 @@ def train_model(C: Config, X, y, model, action_taken):
     with torch.no_grad():
         outputs, hidden_states = model(X)
         if C.print_progress:
-            print(f'Sig_2 of last hidden: {hidden_states[-1].var().item()}')
+            print(f'Variance of last hidden: {hidden_states[-1].var().item():.2e}, of output: {outputs.var().item():.2e}')
 
     # Loss function and optimizer
     criterion = C.loss_fn
-    algo = optim.SGD if C.algo_name == 'SGD' else optim.Adam
+    algo = getattr(optim, C.algo_name) #optim.SGD if C.algo_name == 'SGD' else optim.Adam
     optimizer = algo(model.parameters(), lr=C.learning_rate, weight_decay=C.lambda_reg)
     loss_thresh = 0.05 if not C.one_hot_inputs else 0.01
     omit_inds = C.omit_indices

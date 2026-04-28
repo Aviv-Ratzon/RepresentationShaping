@@ -18,6 +18,7 @@ class DNN(nn.Module):
         if fixed_output:
             self.output_layer.requires_grad_(False)
 
+        self.activation_name = activation
         # Set activation function
         if linear_net:
             self.activation = nn.Identity()
@@ -44,18 +45,19 @@ class DNN(nn.Module):
         self.init_weights(fixed_output, G)
 
     def init_weights(self, fixed_output, G):
+        rec_gain = nn.init.calculate_gain(self.activation_name.lower()) * G
         if self.num_layers == 0:
-            nn.init.xavier_normal_(self.output_layer.weight, gain=G)
+            nn.init.xavier_normal_(self.output_layer.weight, gain=rec_gain)
         else:
-            nn.init.xavier_normal_(self.input_layer.weight, gain=G)
+            nn.init.xavier_normal_(self.input_layer.weight, gain=rec_gain)
             
             for layer in self.hidden_layers:
-                nn.init.xavier_normal_(layer.weight, gain=G)
+                nn.init.xavier_normal_(layer.weight, gain=rec_gain)
             if fixed_output:
                 nn.init.normal_(self.output_layer.weight)
             else:
                 # nn.init.normal_(self.output_layer.weight)
-                nn.init.xavier_normal_(self.output_layer.weight, gain=G)
+                nn.init.xavier_normal_(self.output_layer.weight)
         # sigma = G ** (-1 / self.num_layers + 1)
         # fan_in = self.input_layer.weight.size(1)
         # scale = sigma / fan_in**0.5
