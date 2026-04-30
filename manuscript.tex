@@ -1,0 +1,794 @@
+\documentclass{article}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\DeclareMathOperator*{\argmin}{arg\,min}
+% if you need to pass options to natbib, use, e.g.:
+%     \PassOptionsToPackage{numbers, compress}{natbib}
+% before loading neurips_2026
+
+% The authors should use one of these tracks.
+% Before accepting by the NeurIPS conference, select one of the options below.
+% 0. "default" for submission
+\usepackage{neurips_2026}
+% the "default" option is equal to the "main" option, which is used for the Main Track with double-blind reviewing.
+% 1. "main" option is used for the Main Track
+%  \usepackage[main]{neurips_2026}
+% 2. "position" option is used for the Position Paper Track
+%  \usepackage[position]{neurips_2026}
+% 3. "eandd" option is used for the Evaluations & Datasets Track
+ % \usepackage[eandd]{neurips_2026}
+ % if you want to opt-in for a de-anomymized submission (not recommended, but OK):
+ %\usepackage[eandd, nonanonymous]{neurips_2026}
+% 4. "creativeai" option is used for the Creative AI Track
+%  \usepackage[creativeai]{neurips_2026}
+% 5. "sglblindworkshop" option is used for the Workshop with single-blind reviewing
+ % \usepackage[sglblindworkshop]{neurips_2026}
+% 6. "dblblindworkshop" option is used for the Workshop with double-blind reviewing
+%  \usepackage[dblblindworkshop]{neurips_2026}
+
+% After being accepted, the authors should add "final" behind the track to compile a camera-ready version.
+% 1. Main Track
+ % \usepackage[main, final]{neurips_2026}
+% 2. Position Paper Track
+%  \usepackage[position, final]{neurips_2026}
+% 3. Evaluations & Datasets Track
+ % \usepackage[eandd, final]{neurips_2026}
+% 4. Creative AI Track
+%  \usepackage[creativeai, final]{neurips_2026}
+% 5. Workshop with single-blind reviewing
+%  \usepackage[sglblindworkshop, final]{neurips_2026}
+% 6. Workshop with double-blind reviewing
+%  \usepackage[dblblindworkshop, final]{neurips_2026}
+% Note. For the workshop paper template, both \title{} and \workshoptitle{} are required, with the former indicating the paper title shown in the title and the latter indicating the workshop title displayed in the footnote.
+% For workshops (5., 6.), the authors should add the name of the workshop, "\workshoptitle" command is used to set the workshop title.
+% \workshoptitle{WORKSHOP TITLE}
+
+% "preprint" option is used for arXiv or other preprint submissions
+ % \usepackage[preprint]{neurips_2026}
+
+% to avoid loading the natbib package, add option nonatbib:
+% \usepackage[nonatbib]{neurips_2026}
+
+\usepackage[utf8]{inputenc} % allow utf-8 input
+\usepackage[T1]{fontenc}    % use 8-bit T1 fonts
+\usepackage{hyperref}       % hyperlinks
+\usepackage{url}            % simple URL typesetting
+\usepackage{booktabs}       % professional-quality tables
+\usepackage{amsfonts}       % blackboard math symbols
+\usepackage{nicefrac}       % compact symbols for 1/2, etc.
+\usepackage{microtype}      % microtypography
+\usepackage{xcolor}         % colors
+
+% Note. For the workshop paper template, both \title{} and \workshoptitle{} are required, with the former indicating the paper title shown in the title and the latter indicating the workshop title displayed in the footnote. 
+\title{How prediction horizon biases learning dynamics in predictive learning}
+
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to LaTeX to determine where to break the
+% lines. Using \AND forces a line break at that point. So, if LaTeX puts 3 of 4
+% authors names on the first line, and the last on the second line, try using
+% \AND instead of \And before the third author name.
+
+
+\author{%
+  David S.~Hippocampus\thanks{Use footnote for providing further information
+    about author (webpage, alternative address)---\emph{not} for acknowledging
+    funding agencies.} \\
+  Department of Computer Science\\
+  Cranberry-Lemon University\\
+  Pittsburgh, PA 15213 \\
+  \texttt{hippo@cs.cranberry-lemon.edu} \\
+  % examples of more authors
+  % \And
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+  % \AND
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+  % \And
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+  % \And
+  % Coauthor \\
+  % Affiliation \\
+  % Address \\
+  % \texttt{email} \\
+}
+
+
+\begin{document}
+
+
+\maketitle
+
+
+\begin{abstract}
+  Predictive learning has emerged as a central paradigm for training models across diverse data domains and is increasingly viewed as a foundation for modern artificial intelligence. A common intuition for this success is that accurate prediction requires models to capture the underlying dynamics of the environment, leading to the emergence of structured “world models.” However, predictive learning does not universally yield such representations, and a mechanistic account of when and why it does remains incomplete. In this work, we identify the prediction horizon as a critical but often implicit component of predictive learning objectives. We show that increasing the prediction horizon fundamentally shapes the effective structure of the learning problem. In a minimal analytical setting, we demonstrate both theoretically and empirically that the model’s implicit biases interact with this structure change to recover the latent geometry of the task. We further extend the empirical results to nonlinear architectures and more complex datasets, where similar phenomena persist. These findings provide a principled explanation for the emergence of structured representations in predictive learning paradigms and clarify the conditions under which such representations can be expected.
+\end{abstract}
+
+\section{Introduction}
+
+Predictive learning has emerged as a powerful framework for training models that generalize well across a wide range of domains. In its simplest form, the task is minimally specified: a model is trained to predict the next observation given the current one. Despite this simplicity, predictive objectives have driven major advances across domains including language, vision, video, and audio \citep{brown2020language,chen2020generative,sun2019videobert,baevski2020wav2vec2}. In neuroscience, they have also been used to study how networks acquire \emph{world models}—internal representations that capture the latent structure of the environment—by requiring them to predict future inputs given the past observations \citep{recanatesi2021predictive, stachenfeld2017hippocampus, levenstein2024sequential}. These representations are often hypothesized to underlie the success of predictive learning, as accurate prediction necessitates capturing the underlying dynamics of the data.
+ % 
+
+Despite these advances, several fundamental questions remain unresolved. While many studies report that predictive learning networks develop low-dimensional, interpretable representations of latent variables, this outcome is not guaranteed. Intuitively, learning a latent world model seems advantageous for predictive tasks, as structured representations may enable more efficient predictions. However, overparameterized networks admit infinitely many solutions that can achieve perfect performance without forming any interpretable representation \citep{frankle2018lottery, zhang2016understanding, nguyen2017loss}. The mere success of predictive learning at minimizing prediction error therefore does not explain why structured world models emerge in practice. A deeper understanding of the inductive biases introduced by prediction horizon, network architecture, and training dynamics is needed to clarify \emph{when} and \emph{why} predictive learning induces meaningful internal representations.
+
+We start by noting that a predictive learning task cannot be specified without specifying the \emph{prediction horizon}. In this work, we take a first step towards understanding the effect of varying this horizon, and the general principles governing predictive representations, by constructing a minimal linear predictive learning problem inspired by previous work \cite{recanatesi2021predictive}. This setting is analytically tractable yet rich enough to capture essential aspects of the problem. We show empirically that when the network is sufficiently deep and the prediction horizon scales linearly with the environment size, gradient descent consistently converges to highly structured solutions that recover the underlying state from the observations. To explain this phenomenon, we combine tools from machine learning theory with an analysis of the Ordinary Least Squares estimator structure, revealing how the prediction horizon and loss choice (cross-entropy rather than mean squared error) shape the solution landscape.  
+
+Building on this intuition, we then extend our study to more complex settings, including nonlinear networks, continuous environments and stochastic observations, as well as settings with multiple independent environments. Across these experiments, we test the generality of the principles uncovered in the linear case, exploring how task structure, training biases, and prediction horizon interact to produce world models.  
+
+Our contributions are threefold:  
+\begin{enumerate}
+\item \textbf{Empirical characterization of horizon-induced representation learning in a minimal predictive task.} In an analytically tractable linear setting, we show that predictive learning does not generically recover latent state structure, but does so reliably when the prediction horizon is sufficiently large relative to the environment size and the network is sufficiently deep. We systematically characterize how prediction horizon and depth shape the geometry of the learned representations.
+
+\item \textbf{A mechanistic account linking prediction horizon, estimator structure, and implicit bias.} We make a connection that was previously overlooked: in deep linear neural networks trained for multiclass classification, the parameters converge to the hard margin SVM with regularization over the weight matrix rank rather than its $L_2$ norm. We then relate the effect of increasing prediction horizon to changes in the structure and spectrum of the OLS estimator. Together, these results provide a concrete explanation for how prediction horizon biases models to favors ordered representations that align with the latent state in the abstract setting.
+
+\item \textbf{Generalization beyond the linear toy model.} We extend the analysis empirically to nonlinear and more naturalistic settings, including continuous environments, stochastic observations, multiple independent environments, non-euclidean geometry, and predictive coding networks. Across these settings, we find the same qualitative pattern: longer prediction horizons robustly promote low-dimensional representations that reflect the underlying latent geometry.
+
+\end{enumerate}
+
+Together, these results advance our understanding of how predictive learning interacts with model architecture, task design, and optimization dynamics to shape internal representations.  
+
+
+\section{Related Work}
+
+Predictive learning has been shown to uncover latent structure in environments \cite{recanatesi2021predictive}. In particular, predictive learning can recover low-dimensional latent spaces in discrete, continuous, and angular settings \cite{recanatesi2021predictive}. However, this prior work did not examine when such structure fails to emerge. More recent work extended this line of research by showing that recurrent networks form continuous attractors under large-horizon, but not next-step, prediction, highlighting the importance of prediction horizon \cite{levenstein2024sequential}. Our study builds on these findings by analyzing how horizon length, network depth, and optimization dynamics bias predictive learning solutions.
+
+Previous works have proposed several approaches for extracting latent structure within predictive frameworks. One line of work introduced models that enforce locally linear latent dynamics through explicit architectural priors \cite{watter2015embed}. Other work encouraged simplified latent dynamics by imposing a soft state-invariance regularizer, biasing the latent state to change slowly unless driven by actions \cite{saanum2024simplifying}. Related approaches have also learned structured latent transitions using contrastive objectives that separate true next states from negatives \cite{kipf2019contrastive}. While these methods demonstrate that predictive learning can reveal aspects of latent geometry, they rely on architectural constraints, explicit regularization, or assumed structure of the environment. In contrast, our work provides a mechanistic explanation for why and when predictive learning alone, without explicit regularization, reshapes the data geometry and consistently drives networks toward representations that recover the underlying latent state.
+
+Separately, theoretical results on implicit bias in classification show that gradient descent converges to the hard-margin SVM solution for linearly separable data. This has been established for single-layer \citep{soudry2018implicit}, deep linear \citep{ji2018gradient}, and homogeneous networks \citep{lyu2019gradient}.
+
+Finally, while related to Neural Collapse \citep{papyan2020prevalence}, our findings differ: in our work representations collapse toward the latent geometry of the environment rather than a simplex, indicating that the effect arises from the structure of the environment rather than an optimal decoding geometry.
+
+% Predictive coding?
+ % Predictive coding and predictive learning are conceptually closely related. The former constitutes a biologically plausible learning rule, while the latter constitutes a biologically plausible unsupervised task demand. 
+
+
+\section{Results}
+
+We begin by formalizing the task of predictive learning in a simple setting (Figure~\ref{fig1}).  
+
+\[
+\mathbf{x} = (O(s), g(a)), \quad \mathbf{y} = O(s+a), \quad s \in [1, S], \; a \in [-A, A].
+\]
+
+Here, $O$ and $g$ denote high-dimensional observation functions parameterized by lower-dimensional states $s$ and actions $a$. $S$ denotes the number of states. The parameter $A$ specifies the maximal action range, which can be interpreted as the prediction horizon of the model. This formulation abstracts away explicit time dependence: instead of modeling continuous temporal evolution, it is equivalent to sampling from a memory buffer of state--action trajectories. In the appendix, we show that the same qualitative behavior persists when actions are provided sequentially rather than encoded via their magnitude. We will first consider a deterministic and discrete environment in which each state maps to a single observation. These assumptions will be relaxed when extending to more complex and naturalistic settings.
+
+\begin{figure}[h]
+\begin{center}
+%\framebox[4.0in]{$\;$}
+\includegraphics[width=1\textwidth]{Figures/main/fig1.png}
+\end{center}
+\caption{Illustration of predictive learning setting where time is abstracted away. An agent is acting in an environment, producing a set of observations and actions in its trajectory. The task is to predict, for each action and observation pair, the following observation. The environment has an underlying structure, and training a model on a predictive learning task sometimes generates a representation of this latent structure. Recent work has shown that increasing the prediction horizon can lead to more accurate and stable representations \citep{levenstein2024sequential}.}
+\label{fig1}
+\end{figure}
+
+
+\subsection{Spontaneous collapse to order in abstract predictive learning}
+
+We consider an abstract predictive learning task inspired by previous work \cite{recanatesi2021predictive}, in which $S$ states and $2A+1$ actions are represented by one-hot encoded observations $O(s) = \delta_s \in \mathbb{R}^S$, $s \in [1, S]$, $g(a) = \delta_a \in \mathbb{R}^{2A+1}$, $a \in [-A, A]$. The parameter $A$ specifies the maximal allowed action. The network receives inputs of the form $\{O(s), g(a)\}$. The target output is the next observation $O(s+a)$. Tuples that map to undefined states are discarded. We train a deep linear network with $L$ layers and no biases on the full dataset of all possible state–action pairs. Since the observations are one-hot encoded, training with cross-entropy loss naturally casts the task as multiclass classification.
+
+Our goal is to study the relationship between the environment’s latent geometry and the network’s internal representation. The former is given by the shifted state $s+a$, while the latter we define as the activation of the last hidden layer. Crucially, the choice of one-hot encoding removes any intrinsic correlations between neighboring states. Thus, any emergent structure in the hidden representations must arise from learning to solve the predictive task, rather than from structure within the input data.
+
+In an overparameterized network, there exist infinitely many perfect accuracy solutions for any given $A$. For example, a solution for a large $A$ trivially satisfies the task for smaller $A$, as it is a subset of the data of the larger $A$. The key question is therefore: which solution does the network converge to, and why? Figure~\ref{fig2} (a) shows that for a large prediction horizon, the last hidden layer activations spontaneously collapse onto the latent state manifold, whereas in the short horizon setting they do not. This emergence of consistent and highly ordered representations in an unconstrained optimization problem highlights the presence of strong implicit biases in the training dynamics. Although disorganized solutions are equally valid, the network reliably converges to the collapsed manifold structure—but only when the prediction horizon scales linearly with $S$ (Figure~\ref{fig2} b,c). As we will show, explaining this phenomenon requires combining several theoretical results with a deeper analysis of the problem structure.
+
+
+\begin{figure}[h]
+\begin{center}
+%\framebox[4.0in]{$\;$}
+\includegraphics[width=1\textwidth]{Figures/main/fig2.png}
+\end{center}
+\caption{(a) The first two principal components of the last hidden layer activations for networks trained on short horizon prediction (left) and large horizon prediction with maximal action $A = S/2$ (right). (b, c): We swept across values of $S$ and $A$  and trained deep nonlinear networks on the predictive task with mean squared error loss. For each $(S,A)$ pair we trained 10 networks and plotted the median participation ratio (PR) of the hidden activations. We define $A_{\mathrm{thresh}}$ as the smallest horizon for which PR drops below 2. As shown, $A_{\mathrm{thresh}}$ scales linearly with $S$, supporting the claim that the prediction horizon required for latent state extraction grows proportionally with the environment size. Error bars are standard deviation obtained by bootstrapping. (d) Margins and order metrics for all networks over all prediction horizons. } % points are from A=1
+\label{fig2}
+\end{figure}
+
+\subsection{Mechanism of collapse to order}
+
+Because the task is classification with a linear network, prior work shows that training should converge to the maximal margin solution \citep{soudry2018implicit, ji2018gradient, lyu2019gradient}. However, as illustrated in Figure~\ref{fig2}d, networks of different depths trained on the same task achieve different functional margins. At first glance, this appears to contradict the theoretical results. To resolve this discrepancy, we turn to the concept of \emph{representation cost} \citep{dai2021representation}.
+
+Specifically, it was shown in \cite{lyu2019gradient} that a deep linear network trained on multiclass data converges to parameters that solve
+\[
+\argmin_{W_1,\dots,W_L} \sum_{l=1}^L \|W_l\|_2^2
+\quad \text{s.t.} \quad
+\forall i,\ \forall k \neq y_i:\ 
+W_{y_i}^\top \mathbf{x}_i \geq W_k^\top \mathbf{x}_i + 1.
+\]
+
+where $W = \prod_{l=1}^L W_l$. Although this resembles the hard-margin multiclass SVM, it is not identical. It was further shown in \cite{dai2021representation} that, for deep linear networks, $L_2$ regularization on the parameters corresponds in function space to a Schatten $2/L$ quasi-norm. Thus, in function space, the optimization problem becomes
+
+\[
+\begin{aligned}
+\argmin_{W} \|W\|^{SC}_{2/L}
+&\quad \text{s.t.} \quad 
+\forall i,\ \forall k \neq y_i :\ 
+W_{y_i}^\top \mathbf{x}_i \geq W_k^\top \mathbf{x}_i + 1, \\
+\|W\|^{SC}_{2/L} 
+&= \left(\sum_i \sigma_i^{2/L}\right)^{L/2}
+\end{aligned}
+\]
+
+Where $\sigma_i$ are the singular values. This characterization implies that increasing network depth induces a trade-off between effective rank and functional margin: deeper networks bias the solution toward lower-rank approximations of the hard-margin solution at the cost of smaller margins. This explains the empirical observation that both rank and functional margins decrease with depth (Figure~\ref{fig3}).
+
+At this point we understand that deep networks are biased towards a low rank approximation of the maximal margin solution; however, this still does not explain the dependence on prediction horizon. We first note that increasing the prediction horizon changes the structure of the data -- the input dimension increases, and so does the number of samples. To gain insight into this change, we investigate the structure of the OLS estimator $\Sigma=(X^TX)^{-1}X^TY$. This matrix quantifies the linear relation between the input data and the targets. Intuitively, this matrix can be related to classification when the data is highly balanced and symmetric. In such a case, the OLS estimator can also separate the data into classes. As shown in Figure~\ref{fig3}, for larger values of $A$ the OLS matrix becomes effectively lower-dimensional and exhibits two dominant singular values. The leading singular vector corresponds to a linear combination of the input state and action. Importantly, as the prediction horizon increases, this direction explains a growing fraction of the variance in the data, making it increasingly useful for classification. Consequently, networks consistently converge to solutions that utilize this direction.
+
+%To build intuition, we analyze the structure of the OLS estimator. The matrix \(X^\top X\) has a \emph{block structure} consisting of two diagonal blocks and two off-diagonal \emph{band matrices}. 
+%The width of these bands grows linearly with the prediction horizon \(A\): for a one-dimensional environment with \(S\) states, the non-zero entries in the off-diagonal blocks are confined to a band of width \(2A+1\). 
+%For small \(A\), these bands are very narrow and nearly diagonal, while for large \(A\) they become wide and strongly overlapping, effectively coupling many distant states.
+
+
+% Similarly, the cross-term \(X^\top Y\) also consists of two banded blocks, with the same width scaling. Thus, as \(A\) increases, both \(X^\top X\) and \(X^\top Y\) become increasingly dense, introducing strong correlations between distant states and actions. 
+% This growing overlap causes the spectrum of the OLS estimator to compress, leaving only a few dominant singular directions. % In the special case of cyclic states, this structure simplifies considerably: \(X^\top y\) becomes block-circulant, which allows an exact analytical characterization of its spectrum.  We provide this derivation in the appendix for intuition.
+
+To quantify this effect, we investigated the spectrum of the OLS matrix analytically. We used a variation of the task with cyclic boundaries as it is analytically tractable. We verified empirically that the dimensionality of these matrices in both boundary conditions is similar (appendix). We find the expression for the Participation Ratio of the OLS is:
+
+\[
+    PR(A, S) = \frac{S^3}{\left(2A+1\right)\left(S^2+2AS+S-4A^2-4A-1\right)}.
+\]
+
+Because directions that capture the majority of the data variance are also the most effective for separating classes, the dominant singular vector of \(\Sigma\) naturally becomes the most informative feature for solving the predictive task. This explains why, in the large horizon setting, deep networks consistently converge to this leading direction, yielding ordered, low-dimensional representations of the environment. In contrast, in the short horizon setting, the variance is more spread between directions and thus no single direction separates the data well.
+
+
+\begin{figure}[h]
+\begin{center}
+%\framebox[4.0in]{$\;$}
+\includegraphics[width=1\textwidth]{Figures/main/fig3.png}
+\end{center}
+\caption{Comparison of the spectra of the OLS estimator $\Sigma$ and the effective weight matrix $W$ of trained linear networks under short- and long-horizon predictive tasks. (a) Singular value spectrum of the OLS matrix $\Sigma$. (b) First singular vector of the OLS estimator and the trained model. (c) Comparison between deep (10-layer) and shallow (1-layer) linear networks, showing accuracy as a function of the rank-truncated approximation of $W$. Overall, the figure shows that increasing the prediction horizon makes both the OLS solution and the learned network effectively lower-dimensional, and that deeper networks rely more strongly on the dominant low-rank directions. }
+\label{fig3}
+\end{figure}
+
+Finally, we can put all the puzzle pieces together and ask whether we gained any intuition for a more general setting. For example, consider a predictive task with two distinct environments, each equipped with its own encoding of actions and states. In this case, the singular vectors of the OLS estimator associated with the two environments are orthogonal. However, because deep networks exhibit a low-rank bias, we expect training to favor solutions that align the two representations in a way that minimizes the number of active singular values. Figure~\ref{fig_two_corridors} illustrates this phenomenon. In both tasks, the network embeds the environments within a shared representation space, but under the large horizon objective the resulting structure captures the underlying geometry and introduces a symmetry between analogous representation objects. These results generalize beyond the one-dimensional case, holding also for higher-dimensional latent states, as illustrated in the two-dimensional setting of Figure~\ref{fig_2d}.
+
+\begin{figure}[h]
+\begin{center}
+%\framebox[4.0in]{$\;$}
+\includegraphics[width=1\textwidth]{Figures/main/fig_alignment.png}
+\end{center}
+\caption{Results for the task with two independent environments. Data are projected onto the first two singular vectors of the OLS estimator, confirming that observations and actions from each environment are orthogonal. In the short horizon setting, the model representations remain unaligned, whereas in the large horizon setting they collapse into a shared low-rank structure that aligns the two environments and reveals their underlying symmetry. }
+\label{fig_two_corridors}
+\end{figure}
+
+
+\subsection{Generalization across settings}
+
+Next, we consider a more naturalistic setting where the environment is continuous and observations are temporally correlated. Consider a scenario in which an agent moves between several rooms. Inside every room, the environment changes smoothly, while a transition between rooms introduces discontinuities. A reliable representation of such an environment should use prediction to stitch the various rooms together into a coherent world map. %A key challenge in this regime is that non-zero autocorrelation can be misleading: even a random network may reproduce similar correlations, which could be mistaken for an internal representation of the state. To address this, we construct a high-dimensional piecewise linear function parameterized by a single scalar state. This piecewise-smooth design captures essential features of sensory experience in the real world—for instance, when moving between rooms, sensory inputs evolve gradually within each room but change abruptly at the transition. The function thus combines strong autocorrelation with sharp discontinuities at breakpoints. We hypothesize that a longer prediction horizon enables the network to bridge these discontinuities, thereby enforcing a global order on the data. 
+In this setup, states are drawn from a uniform distribution $s \sim \mathcal{U}(-1, 1)$, and actions are drawn from a Gaussian distribution $a \sim \mathcal{N}(0, A)$. Figure~\ref{fig_piecwise} shows such a world with 4 rooms, captured by $O(s)$. For small $A$ the network merely mirrors the local autocorrelation of the data, whereas for larger horizons it “stitches” together the different linear segments into a coherent one-dimensional manifold.
+
+\begin{figure}[h]
+\begin{center}
+%\framebox[4.0in]{$\;$}
+\includegraphics[width=0.75\textwidth]{Figures/main/fig_pwlinear.png}
+\end{center}
+\caption{Training a deep nonlinear network on a predictive task with observations generated from a piecewise linear function containing three discontinuities. When the action distribution is narrow, the learned representations primarily mirror local autocorrelation. In contrast, with a wider action distribution, the network organizes its hidden representations along a smooth one-dimensional manifold that bridges the discontinuities, thereby recovering the underlying latent state. The top figure shows the Principle Component Analysis (PCA) space, and the bottom figure shows the distance matrix sorted by the state variable.}
+\label{fig_piecwise}
+\end{figure}
+
+To test whether these observations extend to settings with stochastic rather than deterministic observations, we designed a variant of the MNIST image generation task. We trained a conditional deep convolutional generative adversarial network (cDCGAN) to generate MNIST images, where the conditioning input consists of an MNIST digit (observation) together with a one-hot encoded digit label (action). The target output is an MNIST image whose class corresponds to the sum of the input digits. As in the abstract setting, the target class is not provided explicitly, and we control the maximal allowed action. To obtain a more objective measure of representation quality, we exclude a subset of state–action pairs during training and evaluate the model on these held-out combinations, yielding out-of-distribution (OOD) test data. Correct predictions on these pairs require the model to learn a compositional representation of states and actions. In addition, we analyze the latent space of the condition encoder to assess the linearity of the learned representations. Full experimental details are provided in the appendix.
+
+We trained multiple cDCGANs across different prediction horizons and analyzed their behavior. In both short- and long-horizon settings, the models generate visually correct digits (see appendix). However, increasing the prediction horizon leads to systematically lower-dimensional representations from which the target state is more linearly decodable (Figure~\ref{fig_MNIST}). Consistent with this, models trained with larger horizons achieve higher accuracy on the excluded state–action pairs, and this OOD performance correlates with the linear decodability of the target label. These results indicate that longer-horizon predictive learning promotes structured and interpretable representations even in this more naturalistic setting.
+
+\begin{figure}[h]
+\begin{center}
+%\framebox[4.0in]{$\;$}
+\includegraphics[width=1\textwidth]{Figures/main/fig_MNIST.png}
+\end{center}
+\caption{Results of the MNIST experiments. (a) Mean $R^2$ between cumulative PCs of the encoder last layer activity and the target digit value. (b) PR of last layer activity and accuracy over OOD test samples as a function of the maximal action $A$ used during training. Accuracy was measured using a pre-trained classifier which was tested over the generated images. Error bars show Standard Error of Mean. We note that distributions are wide and full violin plots are shown in the appendix (FIG S#). (c) Distribution of accuracy over OOD test samples as a function of the linear decodability of the target digit from the encoder activity. Overall the results show that for larger prediction horizon representations become more linear, and these are correlated with better generalization. }
+\label{fig_MNIST}
+\end{figure}
+
+% \subsection{Neuroscience inspired results}
+
+We now consider a natural setting for this predictive learning task: Predictive Coding Networks (PCNs), which offer a biologically plausible mechanism for such learning. We trained a PCN with 7 layers in the simplified, abstract discrete environment while varying the prediction horizon, observing the same qualitative results as in our previous experiments (Figure~\ref{fig_pcn}). Namely, for short prediction horizons and shallow network depths, representations remain unstructured. Conversely, in deep networks with long prediction horizons, the representations organize along the underlying one-dimensional geometry of the environment. A detailed description of these simulations is provided in the appendix.
+
+\begin{figure}[h]
+\begin{center}
+%\framebox[4.0in]{$\;$}
+\includegraphics[width=0.5\textwidth]{Figures/main/fig_pcn.png}
+\end{center}
+\caption{Predictive Coding Network trained on the discrete state abstract prediction task. For short horizon predictions, representations have no clear structure while for large horizon prediction, representations are arranged along a line in the first Principle Components.}
+\label{fig_pcn}
+\end{figure}
+
+Finally, we consider data in which the underlying structure is non-linear. In all datasets presented so far, the latent geometry was Euclidean, for which a low-rank implicit bias is well suited. To examine whether our results extend to different geometries and corresponding inductive biases, we construct a dataset generated from a balanced binary tree. This setting induces a hyperbolic geometry, which is less amenable to direct visualization and standard quantitative metrics. Instead, following the MNIST experiment, we evaluate representation quality using held-out OOD state–action pairs. Successful generalization to these pairs indicates that the model has learned a compositional representation (Figure~\ref{fig_tree}). Full experimental details are provided in the appendix.
+
+\begin{figure}[h]
+\begin{center}
+%\framebox[4.0in]{$\;$}
+\includegraphics[width=0.5\textwidth]{Figures/main/fig_tree.png}
+\end{center}
+\caption{Accuracy over held-out data.}
+\label{fig_tree}
+\end{figure}
+
+% Finally, we hypothesize that given a predictive task, the agent's behavior directly affects the learned representations. We train a Recurrent Neural Network (RNN) on a large horizon prediction task, similar to \citet{levenstein2024sequential}. In this task the agent is moving in a corridor. We train the RNN on trajectories from one of two behavioral settings: moving back and forth along the corridor, a behavioral paradigm commonly used with mice in a linear track, or randomly exploring it, a behavioral paradigm commonly used with mice exploring open fields. We find that for the first behavioral paradigm, the network develops directional representations, similar to those commonly observed in place cells within linear tracks. For the random exploration paradigm, representations of the two running directions become unified, similar to place cells observed in open fields. A detailed description of these simulations is provided in the appendix.
+
+\section{Discussion}
+
+We have shown that large horizon predictive learning, together with implicit biases, acts as a strong inductive bias that drives networks toward low-dimensional, structured representations of the environment’s latent variables. Increasing the prediction horizon makes the task more constrained, revealing a dominant direction in the data that deep networks, biased toward low-rank solutions, naturally align with. This explains why structured solutions consistently emerge in the large horizon setting, even when many trivial solutions are possible.
+
+In neuroscience, predictive learning has long been proposed as a model for hippocampal function. Recent experimental \cite{vollan2025left} and theoretical \cite{levenstein2024sequential} work has emphasized the importance of sequential prediction, which, in light of our results, can be understood through the lens of prediction horizon. Viewing experimental findings through abstract tasks such as predictive learning provides an alternative to rigid, mechanistic interpretations of brain function. For instance, rather than treating place cells as components of a hard-coded navigational system, they can be interpreted as emerging from the extraction of statistical regularities in sensory input. From this perspective, the notion of prediction horizon offers a concrete framework for both interpreting existing results and designing new experiments. In particular, the dependence of optimal prediction horizons on environment size suggests experiments involving environments with multiple spatial scales, which could help infer the effective prediction horizon used by the brain.
+
+Predictive coding and predictive learning are conceptually closely related. The former constitutes a biologically plausible learning rule, while the latter constitutes a biologically plausible unsupervised learning objective. 
+
+Several open questions remain. It is unclear why this dominant direction takes such a highly structured form and how this intuition extends to more complex, nonlinear settings. Our experiments on continuous environments, gridworld RNNs and MNIST suggest that similar principles apply, but a full theoretical understanding will require future work. These findings also raise broader implications for machine learning and neuroscience, suggesting that longer prediction horizons may play a key role in the emergence of interpretable world models. 
+
+
+\newpage
+
+\bibliography{references}
+\bibliographystyle{unsrt}
+
+
+\appendix
+
+\section{Technical appendices and supplementary material}
+Technical appendices with additional results, figures, graphs, and proofs may be submitted with the paper submission before the full submission deadline (see above). You can upload a ZIP file for videos or code, but do not upload a separate PDF file for the appendix. There is no page limit for the technical appendices. 
+
+Note: Think of the appendix as ``optional reading'' for reviewers. The paper must be able to stand alone without the appendix; for example, adding critical experiments that support the main claims to an appendix is inappropriate. 
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\newpage
+\input{checklist.tex}
+
+
+\section{Appendix}
+
+\renewcommand{\thefigure}{S\arabic{figure}}
+\setcounter{figure}{0} % reset counter
+
+\begin{figure}[h]
+\begin{center}
+%\framebox[4.0in]{$\;$}
+\includegraphics[width=1\textwidth]{fig_2d.png}
+\end{center}
+\caption{Same abstract task as the linear case, but for a two-dimensional state variable.}
+\label{fig_2d}
+\end{figure}
+
+\begin{figure}[h]
+\begin{center}
+%\framebox[4.0in]{$\;$}
+\includegraphics[width=1\textwidth]{fig_S_scaling.png}
+\end{center}
+\caption{We swept across values of $S$ and $A$  and trained deep nonlinear networks on the predictive task with mean squared error loss. For each $(S,A)$ pair we trained 10 networks and plotted the median participation ratio (PR) of the hidden activations. We define $A_{\mathrm{thresh}}$ as the smallest horizon for which PR drops below 2. As shown, $A_{\mathrm{thresh}}$ scales linearly with $S$, supporting the claim that the prediction horizon required for latent state extraction grows proportionally with the environment size. Error bars are standard deviation obtained by bootstrapping. }
+\label{fig_S_scaling}
+\end{figure}
+
+
+\begin{figure}[h]
+\begin{center}
+%\framebox[4.0in]{$\;$}
+\includegraphics[width=1\textwidth]{fig_reg_comparison.png}
+\end{center}
+\caption{Comparison of multiple regularization types for the single-step case in the MNIST task. Note that no type of regularization produces representations that recover the latent structure as multi-step prediction. }
+\label{fig_reg_comparison}
+\end{figure}
+
+\subsection{Code Availability}
+Code for running the simulations and generating the figures is attached to this submission. A publicly accessible GitHub repository will be made available in the future.
+
+\subsection{LLM usage}
+LLMs were used to polish the text in the paper, generate code for running simulations, as well as mathematical and technical descriptions in the appendix.
+
+\subsection{Metrics}
+
+\subsubsection{NC1}
+This metric was introduced in \cite{papyan2020prevalence}. Given hidden activations 
+\[
+h \in \mathbb{R}^{M \times N}, \quad y \in \{1, \dots, C\}^n,
+\]
+where $M$ is the number of samples, $N$ is the hidden dimension, and $C$ is the number of classes, we define:
+
+\[
+\mu = \frac{1}{M} \sum_{i=1}^M h_i
+\]
+as the global mean of activations, and
+\[
+\mu_c = \frac{1}{m_c} \sum_{i: y_i = c} h_i, \quad m_c = |\{i : y_i = c\}|
+\]
+as the class-conditional means.
+
+The within-class scatter matrix is
+\[
+S_W = \frac{1}{M} \sum_{c=1}^C \sum_{i: y_i=c} (h_i - \mu_c)(h_i - \mu_c)^\top,
+\]
+and the between-class scatter matrix is
+\[
+S_B = \frac{1}{M} \sum_{c=1}^C m_c \, (\mu_c - \mu)(\mu_c - \mu)^\top.
+\]
+
+The NC1 metric is then defined as
+\[
+\mathrm{NC1} = \frac{\operatorname{Tr}(S_W)}{\operatorname{Tr}(S_B)}.
+\]
+
+\noindent
+Intuitively, $S_W$ captures the variance of samples around their respective class means, while $S_B$ captures the variance of class means around the global mean. The ratio $\mathrm{NC1}$ therefore measures the relative tightness of clusters to their separation: smaller values indicate more compact class representations.
+
+\subsubsection{Margins}
+Let $f : \mathbb{R}^d \to \mathbb{R}^C$ denote the network output function, where 
+\[
+f(x) = (f_1(x), f_2(x), \dots, f_C(x))
+\]
+are the class scores (logits) for input $x \in \mathbb{R}^d$.  
+For each sample $(x_i, y_i)$ with true label $y_i \in \{1, \dots, C\}$, the functional margin is defined as
+\[
+\gamma_i = f_{y_i}(x_i) - \max_{j \neq y_i} f_j(x_i).
+\]
+
+The multiclass margin for the dataset is then given by
+\[
+\gamma = \min_{i=1,\dots,n} \gamma_i.
+\]
+
+\noindent
+Intuitively, $\gamma_i$ measures the difference between the score assigned to the correct class and the highest score among all incorrect classes for sample $i$. The overall margin $\gamma$ is the worst-case (smallest) of these values across all samples, and therefore characterizes the minimal separation achieved by the classifier.
+
+\subsubsection{$\mathrm{PC}_1^{\text{order}}$}
+Let $\mH \in \mathbb{R}^{M \times N}$ denote the hidden activations, where $M$ is the number of samples and $N$ the hidden dimension.  
+We compute the first principal component $\vu_1 \in \mathbb{R}^N$ of $\mH$, i.e. the unit-norm eigenvector of the sample covariance matrix
+\[
+\Sigma = \frac{1}{M} \sum_{i=1}^M (\vh_i - \bar{\vh})(\vh_i - \bar{\vh})^\top
+\]
+corresponding to the largest eigenvalue, where $\bar{\vh} = \frac{1}{M} \sum_{i=1}^M \vh_i$.
+
+Each sample is then projected onto this direction:
+\[
+z_i = \vu_1^\top (\vh_i - \bar{\vh}), \quad i = 1, \dots, M.
+\]
+
+Let $s_i \in \mathbb{R}$ denote the state variable associated with sample $i$.  
+The \emph{first PC order} metric is defined as the coefficient of determination ($R^2$) of the linear regression between $\{z_i\}$ and $\{s_i\}$:
+\[
+\mathrm{PC}_1^{\text{order}} = R^2(z, s).
+\]
+
+\noindent
+This metric measures how strongly the first principal component of the hidden representations aligns with the state. High values of $\mathrm{PC}_1^{\text{order}}$ indicate that the dominant axis of variation in the representation space reflects the state. For D-dimensional states variables we simply take the first D principal components.
+
+\subsubsection{Alignment}
+To quantify whether the network aligns representations of separate state variables, we compute an alignment score between subspaces spanned by the leading principal components of their activations. This method is adapted from \citet{sorscher2022neural}.
+
+Let $\mH^{(1)}, \M^{(2)} \in \mathbb{R}^{M \times N}$ denote hidden activations corresponding to two distinct dataset partitions (e.g., two environments or contexts).  
+For each partition, we compute the sample covariance
+\[
+\m\Sigma^{(k)} = \frac{1}{M} \sum_{i=1}^M \bigl(\vh^{(k)}_i - \bar{\vh}^{(k)}\bigr)\bigl(\vh^{(k)}_i - \bar{\vh}^{(k)}\bigr)^\top, 
+\quad k \in \{1,2\},
+\]
+where $\bar{\vh}^{(k)}$ is the mean activation of partition $k$.
+
+From $\m\Sigma^{(k)}$, we extract the top principal directions $\mU^{(k)} \in \mathbb{R}^{N \times m}$, where $m$ is the smallest number of eigenvectors explaining at least a fixed proportion of variance (e.g., $95\%$).
+
+The alignment score is based on the principal angles $\theta_1 \leq \dots \leq \theta_m$ between the two subspaces spanned by $\mU^{(1)}$ and $\mU^{(2)}$. We take the cosine of the smallest principal angle:
+\[
+\mathrm{Align}(\mH^{(1)}, \mH^{(2)}) = \cos(\theta_1).
+\]
+
+\noindent
+This score lies in $[0,1]$, with higher values indicating stronger alignment (i.e., the leading directions of variability in the two partitions are closely matched). 
+
+\subsection{Derivation of the Closed-Form OLS Estimator}
+\label{sec:ols_derivation}
+
+We seek the Ordinary Least Squares (OLS) estimator $W_{OLS}$ that predicts a one-hot encoded next state given the concatenated one-hot encodings of the current state and action. 
+
+Let $S$ be the total number of states, and let the set of valid actions be parameterized by bounds $[-A, A]$, giving $m = 2A+1$ total valid actions. The design matrix $X \in \mathbb{R}^{Sm \times (S+m)}$ contains all possible combinations of state and action one-hot vectors. The target matrix $Y \in \mathbb{R}^{Sm \times S}$ contains the corresponding deterministic next states, wrapped circularly.
+
+We wish to find the minimum-norm solution to the normal equations:
+\begin{equation}
+    (X^T X) W_{OLS} = X^T Y
+\end{equation}
+Because the input vectors are concatenated one-hot encodings, $X$ is rank-deficient. The unique minimum-norm solution is given by the Moore-Penrose pseudoinverse, $W_{OLS} = (X^T X)^\dagger X^T Y$. We partition the weight matrix into state weights and action weights: $W_{OLS} = [W_S^T, W_A^T]^T$, where $W_S \in \mathbb{R}^{S \times S}$ and $W_A \in \mathbb{R}^{m \times S}$.
+
+\subsection{Constructing the Gram Matrix}
+Let $e_s \in \mathbb{R}^S$ and $e_a \in \mathbb{R}^m$ be standard basis vectors. Each row of $X$ is $[e_s^T, e_a^T]$. Summing the outer products over all state-action combinations yields the Gram matrix:
+\begin{align}
+    X^T X &= \sum_{s=1}^S \sum_{a=1}^m \begin{bmatrix} e_s \\ e_a \end{bmatrix} [e_s^T, e_a^T] \nonumber \\
+    &= \sum_{s=1}^S \sum_{a=1}^m \begin{bmatrix} e_s e_s^T & e_s e_a^T \\ e_a e_s^T & e_a e_a^T \end{bmatrix}
+\end{align}
+Evaluating these blocks over the sums gives:
+\begin{equation}
+    X^T X = \begin{bmatrix} m I_S & J_{S, m} \\ J_{m, S} & S I_m \end{bmatrix}
+\end{equation}
+where $I_k$ is the $k \times k$ identity matrix, and $J_{p,q}$ is a $p \times q$ matrix of all ones.
+
+\subsection{Constructing the Target Vector}
+The target matrix $Y$ consists of one-hot encoded next states, $e_{(s+a) \pmod S}^T$. Thus:
+\begin{align}
+    X^T Y &= \sum_{s=1}^S \sum_{a=1}^m \begin{bmatrix} e_s \\ e_a \end{bmatrix} e_{(s+a) \pmod S}^T \nonumber \\
+    &= \begin{bmatrix} \sum_s e_s \left(\sum_a e_{(s+a) \pmod S}^T\right) \\ \sum_a e_a \left(\sum_s e_{(s+a) \pmod S}^T\right) \end{bmatrix}
+\end{align}
+The top block constructs a circulant transition matrix $C \in \mathbb{R}^{S \times S}$, where $C_{s,k} = 1$ if state $k$ is reachable from $s$, and $0$ otherwise. In the bottom block, for any fixed action, summing over all source states hits every target state exactly once due to circularity, yielding a vector of all ones. Therefore:
+\begin{equation}
+    X^T Y = \begin{bmatrix} C \\ J_{m, S} \end{bmatrix}
+\end{equation}
+
+\subsection{Solving the Normal Equations under the Null-Space Constraint}
+Substituting our matrices into the normal equations yields a system of two equations:
+\begin{align}
+    m W_S + J_{S, m} W_A &= C \label{eq:sys1} \\
+    J_{m, S} W_S + S W_A &= J_{m, S} \label{eq:sys2}
+\end{align}
+Let $r_S = \mathbf{1}_S^T W_S$ and $r_A = \mathbf{1}_m^T W_A$ be row vectors representing the column sums of $W_S$ and $W_A$. Using the property $J_{p,q} M = \mathbf{1}_p (\mathbf{1}_q^T M)$, we can rewrite the system as:
+\begin{align}
+    W_S &= \frac{1}{m}(C - \mathbf{1}_S r_A) \label{eq:ws_iso} \\
+    W_A &= \frac{1}{S}(\mathbf{1}_m \mathbf{1}_S^T - \mathbf{1}_m r_S) \label{eq:wa_iso}
+\end{align}
+
+Because every input vector $x$ satisfies $\sum_{i=1}^S x_i = 1$ and $\sum_{j=1}^m x_{S+j} = 1$, the design matrix $X$ has a left null space spanned by $v = [\mathbf{1}_S^T, -\mathbf{1}_m^T]^T$. The minimum-norm solution requires that the columns of $W_{OLS}$ are orthogonal to this null space ($v^T W_{OLS} = 0$), which enforces the constraint:
+\begin{equation}
+    \mathbf{1}_S^T W_S - \mathbf{1}_m^T W_A = 0 \implies r_S = r_A \equiv r
+\end{equation}
+
+To find $r$, we multiply Equation \ref{eq:ws_iso} by $\mathbf{1}_S^T$. Noting that the column sums of the circulant matrix $C$ are all $m$ (hence $\mathbf{1}_S^T C = m \mathbf{1}_S^T$), and $\mathbf{1}_S^T \mathbf{1}_S = S$, we obtain:
+\begin{align}
+    r &= \frac{1}{m} (m \mathbf{1}_S^T - S r) \nonumber \\
+    r \left(1 + \frac{S}{m}\right) &= \mathbf{1}_S^T \nonumber \\
+    r &= \frac{m}{S+m} \mathbf{1}_S^T \label{eq:r_val}
+\end{align}
+
+\subsection{Final Closed-Form Expressions}
+Substituting $r$ back into Equation \ref{eq:wa_iso} yields the action weights:
+\begin{align}
+    W_A &= \frac{1}{S} \mathbf{1}_m \left(\mathbf{1}_S^T - \frac{m}{S+m} \mathbf{1}_S^T\right) \nonumber \\
+    &= \frac{1}{S} \mathbf{1}_m \left(\frac{S}{S+m} \mathbf{1}_S^T\right) \nonumber \\
+    &= \frac{1}{S+m} J_{m, S}
+\end{align}
+
+Substituting $r$ into Equation \ref{eq:ws_iso} yields the state weights:
+\begin{align}
+    W_S &= \frac{1}{m} \left(C - \mathbf{1}_S \left(\frac{m}{S+m} \mathbf{1}_S^T\right)\right) \nonumber \\
+    &= \frac{1}{m} C - \frac{1}{S+m} J_{S, S}
+\end{align}
+
+Thus, the complete closed-form minimum-norm OLS estimator is:
+\begin{equation}
+    W_{OLS} = \begin{bmatrix} \frac{1}{m} C - \frac{1}{S+m} J_{S, S} \\[1em] \frac{1}{S+m} J_{m, S} \end{bmatrix}
+\end{equation}
+
+\subsubsection{Participation Ratio of the State Weights}
+
+We derive the participation ratio (PR) of the symmetric matrix $W_S$. The participation ratio characterizes the effective dimensionality of the eigenspace and is defined as:
+\begin{equation}
+    PR = \frac{(\text{Tr}(W_S))^2}{\text{Tr}(W_S^2)}
+\end{equation}
+
+The state weight matrix is given by $W_S = \frac{1}{m} C - \frac{1}{S+m} J_{S,S}$.
+
+First, we compute the trace of $W_S$. Since the action $a=0$ is always valid, the diagonal elements of the circulant matrix $C$ are all $1$. Thus, $\text{Tr}(C) = S$. The trace of $J_{S,S}$ is also $S$. By linearity:
+\begin{equation}
+    \text{Tr}(W_S) = S (\frac{1}{m} - \frac{1}{S+m})
+\end{equation}
+
+Second, because $W_S$ is circular and symmetric:
+\begin{equation}
+    \text{Tr}(W_S^2) = ||w||^2_2 = m(\frac{1}{m} - \frac{1}{S+m})^2 + (S-m) \frac{1}{m^2}
+\end{equation}
+where $w$ is any row of $W_S$. Substituting both into the PR formula and simplifying we get:
+\begin{equation}
+    PR(A, S) = \frac{S^3}{m(S^2+mS-m^2)}
+\end{equation}
+
+And substituting $m=2A+1$:
+\begin{equation}
+    PR(A, S) = \frac{S^3}{\left(2A+1\right)\left(S^2+2AS+S-4A^2-4A-1\right)}
+\end{equation}
+
+
+
+\subsection{MNIST experiment details}
+
+
+
+\subsection{Sequential prediction}
+\label{sec:appendix_sequential_prediction}
+Sequential prediction experiments were implemented in \texttt{RNN\_corridor.py}
+using a linear stacked RNN trained with backpropagation through time.
+This section documents the exact protocol used for the horizon sweep.
+
+\paragraph{Environment and sequence construction.}
+We used a 1D corridor with \(S=20\) discrete states
+(\texttt{length\_corridors=[20]}), and actions \(a \in \{-1,0,1\}\) encoded as one-hot vectors.
+For each sequence length \(k \in \{1,\dots,20\}\), we generated all valid
+state-action starts \((s,a)\) satisfying \(0 \le s+a < S\).
+The input at the first step is
+\[
+x_1 = [\mathrm{onehot}(s),\mathrm{onehot}(a)].
+\]
+Subsequent inputs are action-only,
+\[
+x_t = [\mathbf{0},\mathrm{onehot}(a_t)], \quad t=2,\dots,k,
+\]
+where \(a_t\) is initially the same action as at \(t=1\).
+If applying \(a_t\) would leave the corridor at later steps, the action is clamped to
+zero for the remaining rollout (stay in place).
+Targets are one-hot next states at each step, producing a sequence-labeling objective of length \(k\).
+
+\paragraph{RNN architecture.}
+The model (\texttt{LinearRNN}) has \(L=5\) recurrent layers, hidden size \(H=40\), and no biases.
+Each layer uses an additive linear recurrence:
+\[
+h_t^{(\ell)} = W_{ih}^{(\ell)} z_t^{(\ell)} + h_{t-1}^{(\ell)},
+\]
+with \(z_t^{(1)}=x_t\) and \(z_t^{(\ell)}=h_t^{(\ell-1)}\) for \(\ell>1\).
+No nonlinearity is applied between layers or across time.
+Readout is a linear projection from the top hidden layer to \(S\) logits at each time step.
+
+\paragraph{Optimization.}
+Training uses Adam (\(\mathrm{lr}=10^{-4}\)) for 10,000 epochs on the full generated set for each \(k\)
+(full-batch updates).
+The loss is cross-entropy over all time steps:
+outputs are reshaped to \((N\!\cdot\!k, S)\), targets are converted from one-hot to class indices,
+and a single multiclass objective is optimized.
+Accuracy is reported as the mean fraction of correct state predictions across all samples and time steps.
+Random seeds are fixed to 0 for NumPy and PyTorch.
+
+\paragraph{Representation analysis and saved outputs.}
+After training each \(k\)-model, we extract hidden representations and compute:
+\begin{enumerate}
+\item \textbf{Order:} \(R^2\) between PC1 of hidden activity and ground-truth state.
+\item \textbf{Participation ratio (PR):} effective dimensionality of hidden activity.
+\item \textbf{Task accuracy:} final sequence prediction accuracy.
+\end{enumerate}
+In the default analysis path (\texttt{only\_first\_step=True}), these metrics are evaluated on
+the first prediction step only. The sweep stores
+\(\{k, \mathrm{Order}, \mathrm{Accuracy}, \mathrm{PR}, W\}\) in
+\texttt{RNN\_corridor\_res.pkl}, where \(W\) contains recurrent weights and readout weights.
+\subsection{Predictive Coding Networks}
+\label{sec:appendix_pcn_details}
+We implemented the predictive-coding simulations with two scripts:
+\texttt{train\_pcn\_corridor.py} (experiment orchestration) and
+\texttt{predictive\_coding\_network.py} (model and learning rules).
+This section documents the exact setup used to produce Figure~\ref{fig_pcn}.
+
+\paragraph{Task and dataset construction.}
+For each run, we instantiate the abstract corridor environment with
+\texttt{length\_corridors = [30]} and one-hot state and action encodings
+(\texttt{one\_hot\_inputs = True}, \texttt{one\_hot\_actions = True}).
+The prediction horizon is controlled by the maximal displacement parameter
+\texttt{max\_move} (denoted \(A\) in the main text), swept over
+\(A \in \{1,\dots,29\}\).
+For each \((s,a)\) pair, the model input is the concatenation of current-state and action encodings,
+and the target is the next state. Targets are converted to class indices with
+\texttt{argmax} before training.
+
+\paragraph{Model architecture.}
+We use a deep predictive coding network with \(L=5\) trainable layers and hidden widths
+\([256,256,256,256]\), i.e., input \(\rightarrow\) 4 hidden layers \(\rightarrow\) output.
+Weights are initialized as \(W_l \sim \mathcal{N}(0, \sigma_l^2)\) with
+\(\sigma_l^2 = 2/(n_{\mathrm{in}}+n_{\mathrm{out}})\), and biases are initialized to zero.
+Hidden layers use ReLU activations; the output layer uses a sigmoid nonlinearity.
+Input features are standardized per dimension (zero mean, unit variance; near-zero standard
+deviations are clamped to 1).
+
+\paragraph{Predictive-coding inference and local learning.}
+For each minibatch, latent states are first initialized by a feedforward pass, then relaxed for
+\texttt{inference\_steps = 30} iterations using local prediction errors.
+Denoting layer states by \(h_l\), prediction errors by
+\(e_{l+1} = h_{l+1} - \hat{h}_{l+1}\), and activation function by \(\phi\),
+hidden-state updates follow
+\[
+h_l \leftarrow h_l + \eta_{\mathrm{infer}}
+\Big((e_{l+1}W_l)\odot \phi'(h_l) - e_l\Big),
+\]
+with \(\eta_{\mathrm{infer}} = 0.05\).
+The output state is updated with a supervised mismatch term
+\((h_L - y)\) in addition to the local prediction error.
+After inference, synapses are updated with a local Hebbian-like rule
+\[
+\Delta W_l \propto e_{l+1}^{\top}\phi(h_l), \qquad
+\Delta b_l \propto \mathrm{mean}(e_{l+1}),
+\]
+using \(\eta_{\mathrm{weight}} = 0.2\), without backpropagation through time or
+autograd-based gradient propagation.
+
+\paragraph{Optimization protocol.}
+Each run uses full-batch training (\texttt{batch\_size = N}, where \(N\) is the full dataset size)
+for 1000 epochs; while batches are technically shuffled in code, full-batch updates make the
+optimization invariant to sample order within each epoch.
+We evaluate training accuracy with \texttt{model.score}.
+To quantify geometric organization, we compute (i) \(R^2\) between the first principal axis of
+last-hidden activations and state labels, and (ii) participation ratio (PR) of the same activations.
+For the PCA metric, evaluation is restricted to samples with \(|a|\le 1\), matching the analysis code.
+
+\paragraph{Sweep and aggregation.}
+We run 10 random seeds for each horizon value, producing \(29 \times 10 = 290\) simulations total.
+The script stores intermediate arrays after each completed run
+(\texttt{result\_arrays.pkl}: \(R^2\), PR, and train accuracy).
+Final plots report mean and standard deviation across seeds as a function of \(A\).
+
+\paragraph{Parallel execution and device assignment.}
+Simulations are parallelized with Python multiprocessing
+(\texttt{n\_workers = 8}) and worker-local device pinning.
+Workers are assigned GPUs in round-robin order over the list
+\texttt{("cuda:4","cuda:5","cuda:6","cuda:7")}; if CUDA is unavailable, runs fall back to CPU.
+This assignment affects throughput only and does not change the learning rule.
+
+
+\subsection{Abstract task with binary tree geometry}
+\label{sec:appendix_tree_geometry}
+The binary-tree experiments were implemented in \texttt{tree\_FFN\_sweeps.py}.
+This section documents the exact data construction, model, and sweep protocol used
+for the abstract non-Euclidean task in Figure~\ref{fig_tree}.
+
+\paragraph{State space and action set.}
+We define a rooted binary tree of depth \(d\), with states indexed as heap nodes
+\(\{1,\dots,2^d-1\}\). The action set is
+\(\mathcal{A}=\{\texttt{up},\texttt{down-left},\texttt{down-right}\}\),
+implemented as integer actions \(\{0,1,2\}\), with one-hot encodings.
+Transitions follow
+\[
+\texttt{up}: s \mapsto \lfloor s/2 \rfloor,\quad
+\texttt{down-left}: s \mapsto 2s,\quad
+\texttt{down-right}: s \mapsto 2s+1.
+\]
+Invalid transitions are excluded by construction.
+
+\paragraph{Input-output construction for horizon \(k\).}
+For each start-target pair \((s_{\mathrm{start}}, s_{\mathrm{target}})\), we compute the
+shortest path on the tree via the lowest common ancestor decomposition:
+move up from start to the ancestor, then down to the target.
+Pairs requiring more than \(k\) moves are discarded.
+The model input is
+\[
+x = [\mathrm{onehot}(s_{\mathrm{start}}), \mathrm{onehot}(a_1),\dots,\mathrm{onehot}(a_m), 0,\dots,0],
+\]
+where \(m\le k\) is the path length and the action segment is zero-padded to length \(k\).
+The target is a one-hot code of the reached endpoint \(s_{\mathrm{target}}\).
+For bookkeeping, action sequences are also padded with a dedicated \texttt{stay} token
+(\texttt{action}=3), which is not part of the model input alphabet.
+
+\paragraph{OOD split protocol.}
+To probe compositional generalization, we create held-out samples by omitting a subset of examples
+that involve the maximal state index \(s_{\max}=2^d-1\).
+Specifically, we collect all rows with \(s_{\mathrm{start}}=s_{\max}\) or
+\(s_{\mathrm{target}}=s_{\max}\), then sample half of them uniformly at random into the test set.
+The remaining rows form the training set.
+
+\paragraph{Feedforward model.}
+We train a ReLU multilayer perceptron (\texttt{DeepNet}) with:
+\begin{itemize}
+\item hidden width \(H\) (default \(H=512\)),
+\item \(L\) hidden layers (swept; defaults include \(L\in\{1,2,3\}\)),
+\item Xavier-normal initialization with gain \texttt{init\_scale},
+\item optional dropout, \(L_1\), and \(L_2\) regularization.
+\end{itemize}
+The network outputs class logits over all tree states, and we optimize multiclass
+cross-entropy against target state indices.
+
+\paragraph{Optimization details.}
+Training uses full-batch gradient descent with SGD for a fixed number of epochs
+(default 100,000 per task). The optimizer is initialized with effective learning rate
+\(\eta_0=\texttt{lr}/(2^L+1)\) and weight decay equal to \texttt{l2\_reg}.
+An adaptive schedule then updates the current learning rate between
+\([\texttt{lr\_min},\texttt{lr\_max}]\): it is increased after sustained improvement and
+decreased after sustained non-improvement, using configurable patience and multiplicative factors.
+
+\paragraph{Sweep protocol and parallelization.}
+For each sweep value and each seed, we run horizons
+\[
+k \in \{1,\dots,2(d-1)+1\}.
+\]
+With default \(d=6\), this gives \(k=1,\dots,11\).
+Each task logs train/test loss and accuracy, final learning rate, and the full loss curve.
+Runs are parallelized with multiprocessing (spawn context) and worker-level GPU pinning.
+By default, tasks are distributed across
+\texttt{cuda:4,cuda:5,cuda:6,cuda:7} when \texttt{device=random\_cuda}.
+
+\paragraph{Saved artifacts.}
+For each sweep, raw metrics are saved to
+\texttt{sweep\_<name>.json}; summary curves and loss-over-epoch figures are saved as
+\texttt{sweep\_<name>.png} and \texttt{sweep\_<name>\_loss\_over\_epochs.png}.
+In the experiments reported in the manuscript, the primary sweep varies network depth
+(\texttt{num\_layers}), with multiple random seeds per \((k,L)\) configuration.
+
+\end{document}

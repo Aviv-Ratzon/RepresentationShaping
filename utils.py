@@ -214,6 +214,10 @@ def calc_PR(h):
     eigenvalues = np.linalg.eig(cov)[0]
     return abs(np.sum(eigenvalues)**2 / np.sum(eigenvalues**2))
 
+def get_PR(data_dict):
+    h_np = data_dict['hidden_states'][-1].cpu().numpy()
+    return calc_PR(h_np)
+
 
 # PCA function using SVD
 def pca_torch(X, k=None):
