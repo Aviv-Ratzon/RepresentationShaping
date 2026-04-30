@@ -21,19 +21,19 @@ C = Config()
 C.G = 1
 C.linear_net = True
 C.bias = False
-C.learning_rate = 0.0001
-C.hidden_size = 100
-C.L = 5
+C.learning_rate = 0.1
+C.hidden_size = 200
+C.L = 1
 C.num_epochs = 10000
-C.algo_name = 'Adam'
+C.algo_name = 'SGD'
 C.loss_fn = nn.CrossEntropyLoss()
 
 # Sweep variables
 var_name1 = 'max_move'
 var_name2 = 'length_corridors'
-var_values2 = [[S] for S in np.arange(40, 50)]
+var_values2 = [[S] for S in np.arange(10, 51, 5)]
 var_name3 = 'seed'
-var_values3 = np.arange(10)
+var_values3 = np.arange(5)
 
 # Prepare output directory
 output_dir = "results/sweep_S_A_seed_linear"
@@ -96,7 +96,7 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--n_jobs', type=int, default=8, help='Number of parallel jobs')
+    parser.add_argument('--n_jobs', type=int, default=24, help='Number of parallel jobs')
     args, unknown = parser.parse_known_args()
 
     results = Parallel(n_jobs=args.n_jobs)(
