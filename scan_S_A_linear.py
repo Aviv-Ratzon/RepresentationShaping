@@ -21,19 +21,19 @@ C = Config()
 C.G = 1
 C.linear_net = True
 C.bias = False
-C.learning_rate = 0.1
-C.hidden_size = 200
-C.L = 1
+C.learning_rate = 0.001
+C.hidden_size = 250
+C.L = 2
 C.num_epochs = 10000
-C.algo_name = 'SGD'
+C.algo_name = 'Adam'
 C.loss_fn = nn.CrossEntropyLoss()
 
 # Sweep variables
 var_name1 = 'max_move'
 var_name2 = 'length_corridors'
-var_values2 = [[S] for S in np.arange(10, 51, 5)]
+var_values2 = [[S] for S in np.arange(50, 60, 1)]
 var_name3 = 'seed'
-var_values3 = np.arange(5)
+var_values3 = np.arange(1)
 
 # Prepare output directory
 output_dir = "results/sweep_S_A_seed_linear"
@@ -43,7 +43,7 @@ os.makedirs(output_dir, exist_ok=True)
 combinations = []
 for v2 in var_values2:
     v2_val = v2[0]  # since v2 is a list like [S]
-    for v1 in np.arange(1, v2_val):
+    for v1 in np.arange(1, v2_val//2):
         for v3 in var_values3:
             combinations.append((v1, v2, v3))
 

@@ -39,7 +39,7 @@ def run_single_sim(task: tuple[int, int, int, int]) -> tuple[int, int, float, fl
     i_seed, seed, i_max_move, max_move = task
 
     C = Config()
-    C.length_corridors = [30]
+    C.length_corridors = [20]
     C.max_move = max_move
     C.one_hot_inputs = True
     C.one_hot_actions = True
@@ -91,7 +91,7 @@ def save_results(result_path: str, r2_l: np.ndarray, pr_l: np.ndarray, train_sco
 
 
 def main() -> None:
-    max_move_l = np.arange(1, 30)
+    max_move_l = np.arange(1, 20)
     n_seeds = 10
     result_path = "result_arrays.pkl"
     gpu_devices = ("cuda:4", "cuda:5", "cuda:6", "cuda:7")
