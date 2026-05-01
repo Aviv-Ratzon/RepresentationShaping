@@ -1,4 +1,5 @@
 import argparse
+import csv
 import hashlib
 import json
 import multiprocessing as mp
@@ -415,6 +416,7 @@ def _plot_single_sweep(
         return np.vstack([means - lower, upper - means])
 
     fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(11, 8))
+    csv_rows: list[dict[str, float | int]] = []
 
     for value in sweep_values:
         rows = [row for row in results if row["sweep_name"] == sweep_name and row["sweep_value"] == value]
@@ -426,12 +428,43 @@ def _plot_single_sweep(
         _, train_loss_mean, train_loss_std = _mean_std_by_k(rows, "train_loss")
         _, test_acc_mean, test_acc_std = _mean_std_by_k(rows, "test_accuracy")
         _, test_loss_mean, test_loss_std = _mean_std_by_k(rows, "test_loss")
+        train_acc_yerr = _bounded_yerr(train_acc_mean, train_acc_std, 0.0, 1.0)
+        train_loss_yerr = _bounded_yerr(train_loss_mean, train_loss_std, 1e-12, float("inf"))
+        test_acc_yerr = _bounded_yerr(test_acc_mean, test_acc_std, 0.0, 1.0)
+        test_loss_yerr = _bounded_yerr(test_loss_mean, test_loss_std, 1e-12, float("inf"))
+
+        for idx, k in enumerate(k_l):
+            n_runs = sum(1 for row in rows if int(row["k"]) == k)
+            csv_rows.append(
+                {
+                    "sweep_name": sweep_name,
+                    "sweep_value": float(value),
+                    "k": int(k),
+                    "n_runs": int(n_runs),
+                    "train_accuracy_mean": float(train_acc_mean[idx]),
+                    "train_accuracy_std": float(train_acc_std[idx]),
+                    "train_accuracy_yerr_lower": float(train_acc_yerr[0, idx]),
+                    "train_accuracy_yerr_upper": float(train_acc_yerr[1, idx]),
+                    "train_loss_mean": float(train_loss_mean[idx]),
+                    "train_loss_std": float(train_loss_std[idx]),
+                    "train_loss_yerr_lower": float(train_loss_yerr[0, idx]),
+                    "train_loss_yerr_upper": float(train_loss_yerr[1, idx]),
+                    "test_accuracy_mean": float(test_acc_mean[idx]),
+                    "test_accuracy_std": float(test_acc_std[idx]),
+                    "test_accuracy_yerr_lower": float(test_acc_yerr[0, idx]),
+                    "test_accuracy_yerr_upper": float(test_acc_yerr[1, idx]),
+                    "test_loss_mean": float(test_loss_mean[idx]),
+                    "test_loss_std": float(test_loss_std[idx]),
+                    "test_loss_yerr_lower": float(test_loss_yerr[0, idx]),
+                    "test_loss_yerr_upper": float(test_loss_yerr[1, idx]),
+                }
+            )
 
         label = f"{sweep_name}: {value}"
         ax1.errorbar(
             k_l,
             train_acc_mean,
-            yerr=_bounded_yerr(train_acc_mean, train_acc_std, 0.0, 1.0),
+            yerr=train_acc_yerr,
             marker="o",
             capsize=3,
             alpha=0.9,
@@ -439,7 +472,7 @@ def _plot_single_sweep(
         ax2.errorbar(
             k_l,
             train_loss_mean,
-            yerr=_bounded_yerr(train_loss_mean, train_loss_std, 1e-12, float("inf")),
+            yerr=train_loss_yerr,
             marker="o",
             capsize=3,
             alpha=0.9,
@@ -447,7 +480,7 @@ def _plot_single_sweep(
         ax3.errorbar(
             k_l,
             test_acc_mean,
-            yerr=_bounded_yerr(test_acc_mean, test_acc_std, 0.0, 1.0),
+            yerr=test_acc_yerr,
             marker="o",
             capsize=3,
             label=label,
@@ -456,7 +489,7 @@ def _plot_single_sweep(
         ax4.errorbar(
             k_l,
             test_loss_mean,
-            yerr=_bounded_yerr(test_loss_mean, test_loss_std, 1e-12, float("inf")),
+            yerr=test_loss_yerr,
             marker="o",
             capsize=3,
             alpha=0.9,
@@ -476,6 +509,34 @@ def _plot_single_sweep(
     ax3.legend(fontsize=9)
     fig.suptitle(f"Sweep: {sweep_name}")
     fig.tight_layout()
+
+    csv_path = os.path.join(output_dir, f"sweep_{sweep_name}.csv")
+    csv_fieldnames = [
+        "sweep_name",
+        "sweep_value",
+        "k",
+        "n_runs",
+        "train_accuracy_mean",
+        "train_accuracy_std",
+        "train_accuracy_yerr_lower",
+        "train_accuracy_yerr_upper",
+        "train_loss_mean",
+        "train_loss_std",
+        "train_loss_yerr_lower",
+        "train_loss_yerr_upper",
+        "test_accuracy_mean",
+        "test_accuracy_std",
+        "test_accuracy_yerr_lower",
+        "test_accuracy_yerr_upper",
+        "test_loss_mean",
+        "test_loss_std",
+        "test_loss_yerr_lower",
+        "test_loss_yerr_upper",
+    ]
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=csv_fieldnames)
+        writer.writeheader()
+        writer.writerows(csv_rows)
 
     output_path = os.path.join(output_dir, f"sweep_{sweep_name}.png")
     fig.savefig(output_path, dpi=150)
