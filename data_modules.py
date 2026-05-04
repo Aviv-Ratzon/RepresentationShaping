@@ -2,6 +2,7 @@ import itertools
 import numpy as np
 from sklearn.decomposition import PCA
 from scipy.ndimage import gaussian_filter
+from scipy.stats import lognorm, norm, poisson
 from sklearn.datasets import fetch_openml
 
 
@@ -466,41 +467,69 @@ def create_data_non_linear_fn(C):
     if not hasattr(C, 'action_dist'):
         C.action_dist = 'uniform'  # Whether to use discrete actions
     
-    # Generate random parameter values s
+    # Generate random parameter values s.
+    # We then sample actions directly from each sample's valid interval so (s, a) is always valid.
     if C.discrete_samples:
         s_values = np.linspace(C.s_range[0], C.s_range[1], C.num_samples)
-        actions = np.arange(-C.max_move, C.max_move + 0.0001, np.diff(s_values).mean())
-        # Create all combinations of s_values and actions
-        s_grid, a_grid = np.meshgrid(s_values, actions, indexing='ij')
-        s_values = s_grid.ravel()
-        actions = a_grid.ravel()
     else:
         s_values = np.random.uniform(C.s_range[0], C.s_range[1], C.num_samples)
+
+    s_min, s_max = C.s_range
+    lower_bounds = np.maximum(-C.max_move, s_min - s_values)
+    upper_bounds = np.minimum(C.max_move, s_max - s_values)
+    if np.any(lower_bounds > upper_bounds):
+        raise ValueError("No valid action interval for at least one sampled s.")
+
+    if C.discrete_actions:
+        action_values = np.linspace(-C.max_move, C.max_move, 2 * C.n_actions + 1)
+        valid_actions = (action_values[None, :] >= lower_bounds[:, None]) & (
+            action_values[None, :] <= upper_bounds[:, None]
+        )
+        if np.any(valid_actions.sum(axis=1) == 0):
+            raise ValueError("No valid discrete actions for at least one sampled s.")
+        probs = valid_actions / valid_actions.sum(axis=1, keepdims=True)
+        cdf = np.cumsum(probs, axis=1)
+        u = np.random.rand(s_values.shape[0], 1)
+        action_idx = np.argmax(cdf >= u, axis=1)
+        actions = action_values[action_idx]
+        one_hot_actions = np.eye(action_values.shape[0])[action_idx]
+        actions_in = one_hot_actions
+    else:
         if C.action_dist == 'uniform':
-            actions = np.random.uniform(-C.max_move, C.max_move, C.num_samples)
+            actions = np.random.uniform(lower_bounds, upper_bounds)
         elif C.action_dist == 'normal':
-            actions = np.random.normal(0, C.max_move, C.num_samples)
+            sigma = max(float(C.max_move), 1e-12)
+            cdf_lo = norm.cdf(lower_bounds, loc=0.0, scale=sigma)
+            cdf_hi = norm.cdf(upper_bounds, loc=0.0, scale=sigma)
+            u = np.random.uniform(cdf_lo, cdf_hi)
+            actions = norm.ppf(u, loc=0.0, scale=sigma)
         elif C.action_dist == 'lognormal':
-            actions = np.random.lognormal(0, C.max_move, C.num_samples)
+            sigma = max(float(C.max_move), 1e-12)
+            lo = np.maximum(lower_bounds, 0.0)
+            hi = np.maximum(upper_bounds, 0.0)
+            cdf_lo = lognorm.cdf(lo, s=sigma, scale=1.0)
+            cdf_hi = lognorm.cdf(hi, s=sigma, scale=1.0)
+            u = np.random.uniform(cdf_lo, cdf_hi)
+            actions = lognorm.ppf(u, s=sigma, scale=1.0)
+            actions = np.where(upper_bounds <= 0.0, 0.0, actions)
         elif C.action_dist == 'poisson':
-            actions = np.random.poisson(C.max_move, C.num_samples)
+            lam = max(float(C.max_move), 0.0)
+            lo_i = np.ceil(np.maximum(lower_bounds, 0.0)).astype(int)
+            hi_i = np.floor(np.maximum(upper_bounds, 0.0)).astype(int)
+            lo_i = np.minimum(lo_i, hi_i)
+            actions = np.zeros_like(s_values, dtype=float)
+            for idx, (lo, hi) in enumerate(zip(lo_i, hi_i)):
+                vals = np.arange(lo, hi + 1)
+                pmf = poisson.pmf(vals, mu=lam).astype(float)
+                p_sum = pmf.sum()
+                if p_sum <= 0:
+                    actions[idx] = float(lo)
+                else:
+                    actions[idx] = float(np.random.choice(vals, p=pmf / p_sum))
         else:
             raise ValueError(f"Invalid action distribution: {C.action_dist}")
 
-    if C.discrete_actions:
-        action_idx = np.random.choice(2*C.n_actions + 1, C.num_samples)
-        actions = np.linspace(-C.max_move, C.max_move, 2*C.n_actions + 1)[action_idx]
-        one_hot_actions = np.eye(2*C.n_actions + 1)[action_idx]
-    
-    # Remove samples where s_values + actions are outside of s_range
-    s_plus_a = s_values + actions
-    valid_mask = (s_plus_a >= C.s_range[0]) & (s_plus_a <= C.s_range[1])
-    s_values = s_values[valid_mask]
-    actions = actions[valid_mask]
-    if C.discrete_actions:
-        one_hot_actions = one_hot_actions[valid_mask]
-        actions_in = one_hot_actions
-    else:
+        actions = np.clip(actions, lower_bounds, upper_bounds)
         actions_in = actions.reshape(-1, 1)
     
     # Define the improved non-linear function f(s) with continuous/piecewise options

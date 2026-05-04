@@ -53,7 +53,8 @@ def plot_pca(data_dict, title="", axs=None, action_filter=1):
     PR = calc_PR(hidden)
     if not C.bias:
         W_effective = get_effective_W_from_model_dict(final_weights).cpu().numpy()
-        W_PR = calc_PR(W_effective)
+        _, L, _ = np.linalg.svd(W_effective, full_matrices=False)
+        W_PR = L.sum()**2/(L**2).sum()
         if C.L == 0:
             U, S, V = np.linalg.svd(W_effective, full_matrices=False)
             hidden = X_np @ U @ np.diag(S)
