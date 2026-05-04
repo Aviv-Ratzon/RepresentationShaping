@@ -18,32 +18,33 @@ import shutil
 
 # Set up base config
 C = Config()
-C.G = 1
-C.linear_net = True
-C.bias = False
+C.G = 0.5
+C.linear_net = False
 C.learning_rate = 0.0001
-C.hidden_size = 250
-C.L = 1
+C.L=2
+C.hidden_size = 100
 C.num_epochs = 10000
 C.algo_name = 'Adam'
 C.loss_fn = nn.CrossEntropyLoss()
+C.bias = True
+C.cyclic_corridors = True
 
 # Sweep variables
 var_name1 = 'max_move'
 var_name2 = 'length_corridors'
-var_values2 = [[S] for S in np.arange(30, 100, 5)]
+var_values2 = [[S] for S in np.arange(20, 100, 5)]
 var_name3 = 'seed'
-var_values3 = np.arange(1)
+var_values3 = np.arange(10)
 
 # Prepare output directory
-output_dir = "results/sweep_S_A_seed_linear"
+output_dir = "results/sweep_S_A_seed_circular"
 os.makedirs(output_dir, exist_ok=True)
 
 # Prepare all combinations
 combinations = []
 for v2 in var_values2:
     v2_val = v2[0]  # since v2 is a list like [S]
-    for v1 in np.arange(1, v2_val//2):
+    for v1 in np.arange(1, v2_val//4):
         for v3 in var_values3:
             combinations.append((v1, v2, v3))
 
@@ -96,7 +97,7 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--n_jobs', type=int, default=24, help='Number of parallel jobs')
+    parser.add_argument('--n_jobs', type=int, default=8, help='Number of parallel jobs')
     args, unknown = parser.parse_known_args()
 
     results = Parallel(n_jobs=args.n_jobs)(

@@ -37,7 +37,7 @@ class LinearRNN(nn.Module):
             in_dim = input_size if layer == 0 else hidden_size
             
             self.W_ih.append(
-                nn.Parameter(torch.randn(hidden_size, in_dim) * 0.02)
+                nn.Parameter(torch.randn(hidden_size, in_dim) * 0.1)
             )
             
             if bias:
@@ -130,18 +130,18 @@ class Config:
 
 C = Config()
 
-C.G = 0.85
-C.sig_h_2 = 1e-8
+C.G = 1
+# C.sig_h_2 = 1e-8
 C.linear_net = True
 C.split_actions = False
-C.learning_rate = 0.0001
-C.L=5
+C.learning_rate = 0.001
+C.L=1
 C.print_progress = True
-C.length_corridors = [20]*1
+C.length_corridors = [30]*1
 C.max_move = 1
 C.hidden_size = 40
 C.gpu_id = 4
-C.num_epochs = 10000
+C.num_epochs = 100000
 C.algo_name = 'Adam'
 C.fixed_output = False
 C.loss_fn = nn.CrossEntropyLoss()
@@ -151,8 +151,9 @@ order_k_l = []
 pr_k_l = []
 accuracy_k_l = []
 W_list_l = []
-k_l = np.arange(1, 21)
+k_l = np.arange(1, 30)
 for k in tqdm(k_l):
+    print(f'Running for k={k}/{k_l[-1]}')
 
     C.k = k
 
@@ -253,6 +254,9 @@ for k in tqdm(k_l):
     # Testing
     with torch.no_grad():
         outputs, hidden_states = model(X)
+    
+    plt.plot(accuracy_l)
+    plt.show()
     # print(criterion(outputs, y).item()/y_var)
 
     only_first_step = True
@@ -338,8 +342,19 @@ axs[2].set_title('PR')
 [ax.set_xlabel('k') for ax in axs]
 plt.show()
 
-W_l = [W.detach().cpu().numpy() for W in model.W_ih] + [model.output_layer[0].weight.detach().cpu().numpy()]
-W_eff = W_l[0].T
-for W in W_l[1:]:
-    W_eff = W_eff @ W.T
-plt.plot(W_eff)
+fig, axs = plt.subplots(1, 2, figsize=(10, 5))
+for i in [0, len(k_l)//2]:
+    W_l = W_list_l[i]
+    W_eff = W_l[0].T
+    for W in W_l[1:]:
+        W_eff = W_eff @ W.T
+    W_eff /= np.linalg.norm(W_eff)
+    U, L, V = np.linalg.svd(W_eff)
+    axs[0].plot(L, marker='o')
+    axs[0].set_title('Singular Values')
+    label = r'$k=1$' if i == 0 else r'$k=\frac{1}{2}S$'
+    axs[1].plot(U[:,0], marker='o', label=label)
+    axs[1].set_title('First Singular Vector')
+axs[1].legend()
+plt.tight_layout()
+plt.show()
