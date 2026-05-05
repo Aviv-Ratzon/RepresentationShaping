@@ -44,7 +44,7 @@ os.makedirs(output_dir, exist_ok=True)
 combinations = []
 for v2 in var_values2:
     v2_val = v2[0]  # since v2 is a list like [S]
-    for v1 in np.arange(1, v2_val//4):
+    for v1 in np.arange(v2_val//4, v2_val//200):
         for v3 in var_values3:
             combinations.append((v1, v2, v3))
 
