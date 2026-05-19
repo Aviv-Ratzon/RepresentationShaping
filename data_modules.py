@@ -43,8 +43,8 @@ class action_handler:
     def __init__(self, C):
         n_cors = len(C.length_corridors)
         cor_dim = C.corridor_dim
-        if hasattr(C, 'action_list'):
-            actions = C.action_list
+        if C.action_list is not None:
+            actions = np.array(C.action_list)
         else:
             actions = np.concatenate([np.arange(-C.max_move, -C.min_move + 1), np.arange(C.min_move, C.max_move + 1)])
         actions = np.unique(actions)

@@ -90,6 +90,7 @@ class Config:
         self.data_geometry = 'euclidean'  # Options: 'euclidean', 'hyperbolic'
         self.cyclic_corridors = False
         self.omit_indices = []
+        self.action_list = None
 
         # Model
         self.sig_h_2 = None
