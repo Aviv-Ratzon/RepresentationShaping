@@ -91,6 +91,8 @@ class Config:
         self.cyclic_corridors = False
         self.omit_indices = []
         self.action_list = None
+        self.mix_inputs = None
+        self.mix_outputs = None
 
         # Model
         self.sig_h_2 = None

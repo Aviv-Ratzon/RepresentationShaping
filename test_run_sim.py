@@ -4,30 +4,23 @@ C = Config()
 
 C = Config()
 
+C = Config()
+
 C.G = 0.5
 C.sig_h_2 = None
-# C.gpu_id=1
-# C.seed = 1
 C.linear_net = True
-# C.split_actions = True
-# C.allow_backwards = True
 C.learning_rate = 0.0001
-C.L=5
+C.L=3
 C.print_progress = True
 C.algo_name = 'Adam'
 C.loss_fn = nn.CrossEntropyLoss()
-C.length_corridors = [10]*1
+C.length_corridors = [20]*1
 # C.input_size = 10
-C.max_move = 5
-C.hidden_size = 50 # (C.length_corridors[0]+2*C.max_move+1 + 1)*len(C.length_corridors)
-C.num_epochs = 1
-C.scalar_actions = False
-C.cyclic_corridors = False
-C.one_hot_inputs = False
-C.one_hot_outputs = False
-C.omit_indices = [10]
-C.input_size = 15
-C.output_size = 10
+C.hidden_size = 100 # (C.length_corridors[0]+2*C.max_move+1 + 1)*len(C.length_corridors)
+C.num_epochs = 10000
+C.mix_inputs = 0.5
+C.mix_outputs = 0.5
+C.max_move = 10
 
 
 d = run_sim_wrapper(C)

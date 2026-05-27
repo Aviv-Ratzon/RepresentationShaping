@@ -705,3 +705,57 @@ def get_notebook_name():
     except Exception:
         # Handles FileNotFoundError and also if ipynbname is not available
         return None
+
+
+def mix_orthogonal_to_colinear(V, a, preserve_norms=True):
+    """
+    a=0 -> V unchanged; a=1 -> all rows colinear.
+    Target direction = normalized centroid of V (symmetric in the rows).
+    """
+    V = np.asarray(V, dtype=float)
+    if not 0.0 <= a <= 1.0:
+        raise ValueError("a must be in [0, 1]")
+
+    norms = np.linalg.norm(V, axis=1, keepdims=True)      # (N, 1)
+    if np.any(norms == 0):
+        raise ValueError("Input vectors must be nonzero")
+
+    s = V.sum(axis=0)
+    s_norm = np.linalg.norm(s)
+    if s_norm == 0:
+        raise ValueError("Sum of vectors is zero; no symmetric target direction.")
+    u = s / s_norm                                         # (d,)
+
+    target = norms * u                                     # colinear, same norms
+    W = (1.0 - a) * V + a * target
+
+    if preserve_norms:
+        W = W / np.linalg.norm(W, axis=1, keepdims=True) * norms
+    return W
+
+
+def gaussian_and_shuffle(V, a, preserve_norms=True):
+    """
+    Applies a gaussian filter with sigma=a to each vector v in V, then shuffles the rows of V.
+    Args:
+        V: numpy array of shape (N, d)
+        a: standard deviation for gaussian filter (sigma)
+        preserve_norms: if True, scales each output vector to have the same norm as the original vector
+    Returns:
+        The filtered and row-shuffled V.
+    """
+    V = np.asarray(V, dtype=float)
+    from scipy.ndimage import gaussian_filter1d
+
+    norms = np.linalg.norm(V, axis=1, keepdims=True)
+    V_filtered = np.array([gaussian_filter1d(v, sigma=a) for v in V])
+    
+    if preserve_norms:
+        filtered_norms = np.linalg.norm(V_filtered, axis=1, keepdims=True)
+        # Avoid division by zero; don't rescale zero vectors
+        scale = np.where(filtered_norms != 0, norms / filtered_norms, 1.0)
+        V_filtered = V_filtered * scale
+
+    idx = np.arange(len(V_filtered))
+    np.random.shuffle(idx)
+    return V_filtered[idx]

@@ -4,6 +4,7 @@ from sklearn.decomposition import PCA
 from scipy.ndimage import gaussian_filter
 from scipy.stats import lognorm, norm, poisson
 from sklearn.datasets import fetch_openml
+from utils import mix_orthogonal_to_colinear, gaussian_and_shuffle
 
 
 
@@ -230,6 +231,12 @@ def create_data_euclidean(C):
         n_vectors = np.prod([n_cors] + [cor_len]*cor_dim)
         vecs_out = random_vectors(output_size, n_vectors)
         vecs_out = vecs_out.reshape([n_cors] + [cor_len]*cor_dim + [output_size])
+    
+    if C.mix_inputs is not None:
+        vecs_in = np.array([gaussian_and_shuffle(V, C.mix_inputs) for V in vecs_in])
+    if C.mix_outputs is not None:
+        vecs_out = np.array([gaussian_and_shuffle(V, C.mix_outputs) for V in vecs_out])
+
     positions = list(itertools.product(*[np.arange(cor_len)]*cor_dim))
     X = []
     y = []
