@@ -677,20 +677,123 @@ def multiclass_functional_margin_from_data_dict(data_dict, reducer=np.min, norma
     y = data_dict['y'].cpu().numpy()
     return multiclass_functional_margin(W, X, y, reducer=reducer, normalize=normalize)
 
-def multiclass_functional_margin(W, X, y, reducer=np.min, normalize=True):
-    if normalize:
-        W = W / np.linalg.norm(W)
+def _normalize_W_b(W, b, normalization, L=None):
+    W = np.asarray(W, dtype=float)
+    b = np.zeros(W.shape[1]) if b is None else np.asarray(b, dtype=float)
+    if normalization == 'l2':
+        scale = np.linalg.norm(W)
+        W, b = W / scale, b / scale
+    elif normalization == 'schatten':
+        if L is None:
+            raise ValueError("L is required for schatten normalization")
+        scale = schatten_2_over_L(W, L)
+        W, b = W / scale, b / scale
+    return W, b
+
+
+def multiclass_functional_margins(W, X, y, b=None, normalize=True, L=None, normalization=None):
+    """Return per-sample functional margins and hardest competitor for each sample."""
+    norm_mode = normalization if normalization is not None else ('l2' if normalize else None)
+    if norm_mode is not None:
+        W, b = _normalize_W_b(W, b, norm_mode, L=L)
+    else:
+        W = np.asarray(W, dtype=float)
+        b = np.zeros(W.shape[1]) if b is None else np.asarray(b, dtype=float)
+
+    labels = y.argmax(axis=1) if y.ndim > 1 else y
     margins = []
-    i_max_other_score_l = []
-    for x, y_curr in zip(X, y):
-        label = y_curr.argmax()
-        scores = x@W  # shape (K,)
+    hardest_k = []
+    for x, label in zip(X, labels):
+        scores = x @ W + b
         true_score = scores[label]
-        max_other_score = np.max(np.delete(scores, label))
-        i_max_other_score = np.argmax(np.delete(scores, label))
-        margins.append(true_score - max_other_score)
-        i_max_other_score_l.append(i_max_other_score)
-    return reducer(margins), np.argmin(margins), i_max_other_score_l[np.argmin(margins)]
+        other_mask = np.arange(len(scores)) != label
+        other_scores = scores[other_mask]
+        k = np.where(other_mask)[0][np.argmax(other_scores)]
+        margins.append(true_score - other_scores.max())
+        hardest_k.append(k)
+    return np.array(margins), np.array(hardest_k)
+
+
+def multiclass_functional_margin(W, X, y, reducer=np.min, normalize=True, b=None, L=None, normalization=None):
+    margins, hardest_k = multiclass_functional_margins(
+        W, X, y, b=b, normalize=normalize, L=L, normalization=normalization,
+    )
+    return reducer(margins), np.argmin(margins), hardest_k[np.argmin(margins)]
+
+
+def schatten_2_over_L(A, L):
+    """Schatten-(2/L) norm of matrix A."""
+    if L == 0:
+        return np.linalg.norm(A, ord='fro')
+    p = 2.0 / L
+    s = np.linalg.svd(A, compute_uv=False)
+    return np.sum(s ** p) ** (1.0 / p)
+
+
+def geometric_multiclass_margins(W, X, y, b=None):
+    """
+    For each sample, find the hardest class pair and return the signed
+    distance from x to the decision hyperplane (w_true - w_other)^T x + b_diff = 0.
+    """
+    if y.ndim > 1:
+        labels = y.argmax(axis=1)
+    else:
+        labels = y
+    X = np.asarray(X, dtype=float)
+    W = np.asarray(W, dtype=float)
+    b = np.zeros(W.shape[1]) if b is None else np.asarray(b, dtype=float)
+    n_samples, n_classes = X.shape[0], W.shape[1]
+    margins = np.empty(n_samples, dtype=float)
+    hardest_k = np.empty(n_samples, dtype=int)
+    for i in range(n_samples):
+        x = X[i]
+        y_i = labels[i]
+        best = np.inf
+        best_k = -1
+        for k in range(n_classes):
+            if k == y_i:
+                continue
+            w_diff = W[:, y_i] - W[:, k]
+            b_diff = b[y_i] - b[k]
+            norm_diff = np.linalg.norm(w_diff)
+            if norm_diff == 0:
+                continue
+            geom = (w_diff @ x + b_diff) / norm_diff
+            if geom < best:
+                best = geom
+                best_k = k
+        margins[i] = best
+        hardest_k[i] = best_k
+    return margins, hardest_k
+
+
+def project_to_hyperplane(x, w, c):
+    """Orthogonal projection of point x onto hyperplane w^T x + c = 0."""
+    return x - ((w @ x + c) / (w @ w)) * w
+
+
+def min_multiclass_margin(W, X, y, normalization='geometric', L=None, b=None):
+    """
+    Smallest multiclass margin under one of three normalizations:
+      'geometric' - distance to hardest decision plane (unnormalized W, b)
+      'l2'        - functional margin with W, b scaled by ||W||_F
+      'schatten'  - functional margin with W, b scaled by ||W||_{2/L}
+    """
+    W = np.asarray(W, dtype=float)
+    if normalization == 'geometric':
+        return np.min(geometric_multiclass_margins(W, X, y, b=b)[0])
+    margins, _ = multiclass_functional_margins(
+        W, X, y, b=b, normalize=False, L=L, normalization=normalization,
+    )
+    return np.min(margins)
+
+
+def min_multiclass_margin_from_data_dict(data_dict, normalization='geometric'):
+    W = get_effective_W_from_model_dict(data_dict['final_weights']).cpu().numpy()
+    X = data_dict['X'].cpu().numpy()
+    y = data_dict['y'].cpu().numpy()
+    L = data_dict['C'].L
+    return min_multiclass_margin(W, X, y, normalization=normalization, L=L)
 
 
 def get_notebook_name():
